@@ -30,10 +30,20 @@ jobs:
       run: |
         if [ "${{ matrix.arch }}" = "arm64" ]; then
           sudo dpkg --add-architecture arm64
-          sudo sed -E -i 's|https?://(archive|security)\.ubuntu\.com/ubuntu|http://ports.ubuntu.com/ubuntu-ports|g' /etc/apt/sources.list
-          if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
-            sudo sed -E -i 's|https?://(archive|security)\.ubuntu\.com/ubuntu|http://ports.ubuntu.com/ubuntu-ports|g' /etc/apt/sources.list.d/ubuntu.sources
-          fi
+          sudo python3 - <<'PY'
+import pathlib
+import re
+path = pathlib.Path("/etc/apt/sources.list")
+if path.exists():
+    data = path.read_text()
+    data = re.sub(r"https?://(archive|security)\.ubuntu\.com/ubuntu", "http://ports.ubuntu.com/ubuntu-ports", data)
+    path.write_text(data)
+path = pathlib.Path("/etc/apt/sources.list.d/ubuntu.sources")
+if path.exists():
+    data = path.read_text()
+    data = re.sub(r"https?://(archive|security)\.ubuntu\.com/ubuntu", "http://ports.ubuntu.com/ubuntu-ports", data)
+    path.write_text(data)
+PY
         fi
         sudo apt-get update
         if [ "${{ matrix.arch }}" = "arm64" ]; then
