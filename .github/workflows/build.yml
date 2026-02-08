@@ -51,9 +51,7 @@ jobs:
             gettext \
             gettext-base \
             libtool \
-            pkg-config \
-            gcc-aarch64-linux-gnu \
-            g++-aarch64-linux-gnu \
+            pkgconf \
             libssl-dev:arm64 \
             libc-ares-dev:arm64 \
             zlib1g-dev:arm64 \
