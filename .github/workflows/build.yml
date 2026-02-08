@@ -126,7 +126,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-12
+          - runner: macos-13
             arch: x64
           - runner: macos-14
             arch: arm64
@@ -279,6 +279,7 @@ jobs:
           --with-libssh2 \
           --without-libgcrypt \
           --without-libnettle \
+          --disable-dependency-tracking \
           ARIA2_STATIC=yes \
           CPPFLAGS="-I/${{ matrix.mingw_dir }}/include" \
           LDFLAGS="-L/${{ matrix.mingw_dir }}/lib" \
