@@ -1,9 +1,3 @@
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#include <winsock2.h>
-#include <ws2tcpip.h>
 /* <!-- copyright */
 /*
  * aria2 - The high speed download utility
