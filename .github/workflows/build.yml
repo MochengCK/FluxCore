@@ -203,6 +203,7 @@ jobs:
               libtool
               pkg-config
               gettext
+              gettext-devel
               xz
               mingw-w64-x86_64-openssl
               mingw-w64-x86_64-libssh2
@@ -222,6 +223,7 @@ jobs:
               libtool
               pkg-config
               gettext
+              gettext-devel
               xz
               mingw-w64-i686-openssl
               mingw-w64-i686-libssh2
@@ -259,6 +261,15 @@ jobs:
         aclocal -I m4
         if [ ! -f ./config.rpath ] && [ -f /usr/share/gettext/config.rpath ]; then
           cp /usr/share/gettext/config.rpath ./config.rpath
+        fi
+        if [ ! -f ./config.rpath ]; then
+          ap="$(command -v autopoint || true)"
+          if [ -n "$ap" ]; then
+            p="$(cd "$(dirname "$ap")/.." && pwd)/share/gettext/config.rpath"
+            if [ -f "$p" ]; then
+              cp "$p" ./config.rpath
+            fi
+          fi
         fi
         AUTOPOINT=true autoreconf -fi -I m4
     - name: Verify configure
