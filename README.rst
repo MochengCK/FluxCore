@@ -6,9 +6,8 @@ FluxCore
 FluxCore 说明
 ------------
 
-FluxCore 是一个基于 `https://github.com/aria2/aria2`  的下载引擎，
-供 LinkCore Download Manager 使用。
-LinkCore Download Manager: `https://github.com/MochengCK/LinkCore-Download-Manager`
+FluxCore 是一个基于 `aria2 <https://github.com/aria2/aria2>`_ 的下载引擎，
+供 `LinkCore-Download-Manager <https://github.com/MochengCK/LinkCore-Download-Manager>`_ 使用。
 
 本项目在保留 aria2 原始核心功能与构建方式的基础上，
 针对桌面下载器的使用场景进行了适配与扩展。
@@ -20,9 +19,8 @@ FluxCore 在其基础上继续以 GPL-3.0 许可证发布。
 FluxCore Description
 --------------------
 
-FluxCore is a download engine based on `https://github.com/aria2/aria2`,
-built for LinkCore Download Manager.
-LinkCore Download Manager: `https://github.com/MochengCK/LinkCore-Download-Manager`
+FluxCore is a download engine based on `aria2 <https://github.com/aria2/aria2>`_,
+built for `LinkCore-Download-Manager <https://github.com/MochengCK/LinkCore-Download-Manager>`_.
 
 This project preserves aria2's core features and build workflow,
 while adapting and extending it for desktop download scenarios.
