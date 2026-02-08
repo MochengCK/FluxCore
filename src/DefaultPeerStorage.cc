@@ -1,0 +1,536 @@
+/* <!-- copyright */
+/*
+ * aria2 - The high speed download utility
+ *
+ * Copyright (C) 2006 Tatsuhiro Tsujikawa
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *
+ * In addition, as a special exception, the copyright holders give
+ * permission to link the code of portions of this program with the
+ * OpenSSL library under certain conditions as described in each
+ * individual source file, and distribute linked combinations
+ * including the two.
+ * You must obey the GNU General Public License in all respects
+ * for all of the code used other than OpenSSL.  If you modify
+ * file(s) with this exception, you may extend this exception to your
+ * version of the file(s), but you are not obligated to do so.  If you
+ * do not wish to do so, delete this exception statement from your
+ * version.  If you delete this exception statement from all source
+ * files in the program, then also delete it here.
+ */
+/* copyright --> */
+#include "DefaultPeerStorage.h"
+
+#include <algorithm>
+#include <fstream>
+#include <sstream>
+
+#include "LogFactory.h"
+#include "Logger.h"
+#include "message.h"
+#include "Peer.h"
+#include "BtRuntime.h"
+#include "BtSeederStateChoke.h"
+#include "BtLeecherStateChoke.h"
+#include "PieceStorage.h"
+#include "wallclock.h"
+#include "a2functional.h"
+#include "fmt.h"
+#include "SimpleRandomizer.h"
+
+namespace aria2 {
+
+namespace {
+
+const size_t MAX_PEER_LIST_SIZE = 512;
+
+} // namespace
+
+DefaultPeerStorage::DefaultPeerStorage()
+    : maxPeerListSize_(MAX_PEER_LIST_SIZE),
+      seederStateChoke_(make_unique<BtSeederStateChoke>()),
+      leecherStateChoke_(make_unique<BtLeecherStateChoke>()),
+      lastTransferStatMapUpdated_(Timer::zero())
+{
+}
+
+DefaultPeerStorage::~DefaultPeerStorage()
+{
+  assert(uniqPeers_.size() == unusedPeers_.size() + usedPeers_.size());
+}
+
+size_t DefaultPeerStorage::countAllPeer() const
+{
+  return unusedPeers_.size() + usedPeers_.size();
+}
+
+bool DefaultPeerStorage::isPeerAlreadyAdded(const std::shared_ptr<Peer>& peer)
+{
+  return uniqPeers_.count(
+      std::make_pair(peer->getIPAddress(), peer->getOrigPort()));
+}
+
+void DefaultPeerStorage::addUniqPeer(const std::shared_ptr<Peer>& peer)
+{
+  uniqPeers_.insert(std::make_pair(peer->getIPAddress(), peer->getOrigPort()));
+}
+
+bool DefaultPeerStorage::addPeer(const std::shared_ptr<Peer>& peer)
+{
+  if (unusedPeers_.size() >= maxPeerListSize_) {
+    A2_LOG_DEBUG(fmt("Adding %s:%u is rejected, since unused peer list is full "
+                     "(%lu peers > %lu)",
+                     peer->getIPAddress().c_str(), peer->getPort(),
+                     static_cast<unsigned long>(unusedPeers_.size()),
+                     static_cast<unsigned long>(maxPeerListSize_)));
+    return false;
+  }
+  if (isPeerAlreadyAdded(peer)) {
+    A2_LOG_DEBUG(fmt("Adding %s:%u is rejected because it has been already"
+                     " added.",
+                     peer->getIPAddress().c_str(), peer->getPort()));
+    return false;
+  }
+  if (isBadPeer(peer->getIPAddress())) {
+    A2_LOG_DEBUG(fmt("Adding %s:%u is rejected because it is marked bad.",
+                     peer->getIPAddress().c_str(), peer->getPort()));
+    return false;
+  }
+  const size_t peerListSize = unusedPeers_.size();
+  if (peerListSize >= maxPeerListSize_) {
+    deleteUnusedPeer(peerListSize - maxPeerListSize_ + 1);
+  }
+  unusedPeers_.push_back(peer);
+  addUniqPeer(peer);
+  A2_LOG_DEBUG(fmt("Now unused peer list contains %lu peers",
+                   static_cast<unsigned long>(unusedPeers_.size())));
+  return true;
+}
+
+void DefaultPeerStorage::addPeer(
+    const std::vector<std::shared_ptr<Peer>>& peers)
+{
+  if (unusedPeers_.size() < maxPeerListSize_) {
+    for (auto& peer : peers) {
+      if (isPeerAlreadyAdded(peer)) {
+        A2_LOG_DEBUG(fmt("Adding %s:%u is rejected because it has been already"
+                         " added.",
+                         peer->getIPAddress().c_str(), peer->getPort()));
+        continue;
+      }
+      else if (isBadPeer(peer->getIPAddress())) {
+        A2_LOG_DEBUG(fmt("Adding %s:%u is rejected because it is marked bad.",
+                         peer->getIPAddress().c_str(), peer->getPort()));
+        continue;
+      }
+      else {
+        A2_LOG_DEBUG(fmt(MSG_ADDING_PEER, peer->getIPAddress().c_str(),
+                         peer->getPort()));
+      }
+      unusedPeers_.push_back(peer);
+      addUniqPeer(peer);
+    }
+  }
+  else {
+    for (auto& peer : peers) {
+      A2_LOG_DEBUG(
+          fmt("Adding %s:%u is rejected, since unused peer list is full "
+              "(%lu peers > %lu)",
+              peer->getIPAddress().c_str(), peer->getPort(),
+              static_cast<unsigned long>(unusedPeers_.size()),
+              static_cast<unsigned long>(maxPeerListSize_)));
+    }
+  }
+  const size_t peerListSize = unusedPeers_.size();
+  if (peerListSize > maxPeerListSize_) {
+    deleteUnusedPeer(peerListSize - maxPeerListSize_);
+  }
+  A2_LOG_DEBUG(fmt("Now unused peer list contains %lu peers",
+                   static_cast<unsigned long>(unusedPeers_.size())));
+}
+
+std::shared_ptr<Peer>
+DefaultPeerStorage::addAndCheckoutPeer(const std::shared_ptr<Peer>& peer,
+                                       cuid_t cuid)
+{
+  // 检查是否是被封禁的IP
+  if (isBadPeer(peer->getIPAddress())) {
+    A2_LOG_DEBUG(fmt("Rejecting incoming connection from %s:%u because it is marked bad.",
+                     peer->getIPAddress().c_str(), peer->getPort()));
+    return nullptr;
+  }
+
+  if (isPeerAlreadyAdded(peer)) {
+    auto it = std::find_if(std::begin(unusedPeers_), std::end(unusedPeers_),
+                           [&peer](const std::shared_ptr<Peer>& p) {
+                             return p->getIPAddress() == peer->getIPAddress() &&
+                                    p->getOrigPort() == peer->getOrigPort();
+                           });
+    if (it == std::end(unusedPeers_)) {
+      // peer is in usedPeers_.
+      return nullptr;
+    }
+
+    unusedPeers_.erase(it);
+  }
+  else {
+    addUniqPeer(peer);
+  }
+
+  unusedPeers_.push_front(peer);
+
+  return checkoutPeer(cuid);
+}
+
+void DefaultPeerStorage::addDroppedPeer(const std::shared_ptr<Peer>& peer)
+{
+  // Make sure that no duplicated peer exists in droppedPeers_. If
+  // exists, erase older one.
+  for (auto i = std::begin(droppedPeers_), eoi = std::end(droppedPeers_);
+       i != eoi; ++i) {
+    if ((*i)->getIPAddress() == peer->getIPAddress() &&
+        (*i)->getPort() == peer->getPort()) {
+      droppedPeers_.erase(i);
+      break;
+    }
+  }
+  droppedPeers_.push_front(peer);
+  if (droppedPeers_.size() > 50) {
+    droppedPeers_.pop_back();
+  }
+}
+
+const std::deque<std::shared_ptr<Peer>>& DefaultPeerStorage::getUnusedPeers()
+{
+  return unusedPeers_;
+}
+
+const PeerSet& DefaultPeerStorage::getUsedPeers() { return usedPeers_; }
+
+const std::deque<std::shared_ptr<Peer>>& DefaultPeerStorage::getDroppedPeers()
+{
+  return droppedPeers_;
+}
+
+bool DefaultPeerStorage::isPeerAvailable() { return !unusedPeers_.empty(); }
+
+bool DefaultPeerStorage::isBadPeer(const std::string& ipaddr)
+{
+  auto i = badPeers_.find(ipaddr);
+  if (i == std::end(badPeers_)) {
+    return false;
+  }
+
+  if ((*i).second <= global::wallclock()) {
+    badPeers_.erase(i);
+    return false;
+  }
+
+  return true;
+}
+
+void DefaultPeerStorage::addBadPeer(const std::string& ipaddr)
+{
+  if (lastBadPeerCleaned_.difference(global::wallclock()) >= 1_h) {
+    for (auto i = std::begin(badPeers_); i != std::end(badPeers_);) {
+      if ((*i).second <= global::wallclock()) {
+        A2_LOG_DEBUG(fmt("Purge %s from bad peer", (*i).first.c_str()));
+        badPeers_.erase(i++);
+        // badPeers_.end() will not be invalidated.
+      }
+      else {
+        ++i;
+      }
+    }
+    lastBadPeerCleaned_ = global::wallclock();
+  }
+  A2_LOG_DEBUG(fmt("Added %s as bad peer", ipaddr.c_str()));
+  // We use variable timeout to avoid many bad peers wake up at once.
+  auto t = global::wallclock();
+  t.advance(std::chrono::seconds(
+      std::max(SimpleRandomizer::getInstance()->getRandomNumber(601), 120L)));
+
+  badPeers_[ipaddr] = std::move(t);
+}
+
+void DefaultPeerStorage::deleteUnusedPeer(size_t delSize)
+{
+  for (; delSize > 0 && !unusedPeers_.empty(); --delSize) {
+    auto& peer = unusedPeers_.back();
+    onErasingPeer(peer);
+    A2_LOG_DEBUG(fmt("Remove peer %s:%u", peer->getIPAddress().c_str(),
+                     peer->getOrigPort()));
+    unusedPeers_.pop_back();
+  }
+}
+
+std::shared_ptr<Peer> DefaultPeerStorage::checkoutPeer(cuid_t cuid)
+{
+  if (!isPeerAvailable()) {
+    return nullptr;
+  }
+  
+  // 跳过被封禁的peer
+  while (!unusedPeers_.empty()) {
+    auto peer = unusedPeers_.front();
+    unusedPeers_.pop_front();
+    
+    // 检查是否被封禁
+    if (isBadPeer(peer->getIPAddress())) {
+      A2_LOG_DEBUG(fmt("Skipping peer %s:%u because it is marked bad.",
+                       peer->getIPAddress().c_str(), peer->getPort()));
+      onErasingPeer(peer);
+      continue;
+    }
+    
+    if (peer->usedBy() != 0) {
+      A2_LOG_WARN(fmt("CUID#%" PRId64 " is already set for peer %s:%u",
+                      peer->usedBy(), peer->getIPAddress().c_str(),
+                      peer->getOrigPort()));
+    }
+    
+    // 如果peer的firstContactTime是零（被重置过），说明这是重新连接
+    // 需要重新设置连接时间
+    if (peer->getFirstContactTime().isZero()) {
+      peer->setFirstContactTime(global::wallclock());
+    }
+    
+    peer->usedBy(cuid);
+    usedPeers_.insert(peer);
+    A2_LOG_DEBUG(fmt("Checkout peer %s:%u to CUID#%" PRId64,
+                     peer->getIPAddress().c_str(), peer->getOrigPort(),
+                     peer->usedBy()));
+    return peer;
+  }
+  
+  return nullptr;
+}
+
+void DefaultPeerStorage::onErasingPeer(const std::shared_ptr<Peer>& peer)
+{
+  uniqPeers_.erase(std::make_pair(peer->getIPAddress(), peer->getOrigPort()));
+}
+
+void DefaultPeerStorage::onReturningPeer(const std::shared_ptr<Peer>& peer)
+{
+  if (peer->isActive()) {
+    if (peer->isDisconnectedGracefully() && !peer->isIncomingPeer()) {
+      // 节点断开连接时，重置连接时间
+      // 这样下次连接时，连接时间会从0开始
+      peer->setFirstContactTime(Timer::zero());
+      peer->startDrop();
+      addDroppedPeer(peer);
+    }
+    // Execute choking algorithm if unchoked and interested peer is
+    // disconnected.
+    if (!peer->amChoking() && peer->peerInterested()) {
+      executeChoke();
+    }
+  }
+  peer->usedBy(0);
+}
+
+void DefaultPeerStorage::returnPeer(const std::shared_ptr<Peer>& peer)
+{
+  A2_LOG_DEBUG(fmt("Peer %s:%u returned from CUID#%" PRId64,
+                   peer->getIPAddress().c_str(), peer->getOrigPort(),
+                   peer->usedBy()));
+  if (usedPeers_.erase(peer)) {
+    onReturningPeer(peer);
+    onErasingPeer(peer);
+  }
+  else {
+    A2_LOG_WARN(fmt("Cannot find peer %s:%u in usedPeers_",
+                    peer->getIPAddress().c_str(), peer->getOrigPort()));
+  }
+}
+
+bool DefaultPeerStorage::chokeRoundIntervalElapsed()
+{
+  constexpr auto CHOKE_ROUND_INTERVAL = 10_s;
+
+  if (pieceStorage_->downloadFinished()) {
+    return seederStateChoke_->getLastRound().difference(global::wallclock()) >=
+           CHOKE_ROUND_INTERVAL;
+  }
+
+  return leecherStateChoke_->getLastRound().difference(global::wallclock()) >=
+         CHOKE_ROUND_INTERVAL;
+}
+
+void DefaultPeerStorage::executeChoke()
+{
+  if (pieceStorage_->downloadFinished()) {
+    return seederStateChoke_->executeChoke(usedPeers_);
+  }
+  else {
+    return leecherStateChoke_->executeChoke(usedPeers_);
+  }
+}
+
+void DefaultPeerStorage::setPieceStorage(
+    const std::shared_ptr<PieceStorage>& ps)
+{
+  pieceStorage_ = ps;
+}
+
+void DefaultPeerStorage::setBtRuntime(
+    const std::shared_ptr<BtRuntime>& btRuntime)
+{
+  btRuntime_ = btRuntime;
+}
+
+void DefaultPeerStorage::saveBannedPeers(const std::string& filename)
+{
+  try {
+    // 使用文本模式打开文件（不使用binary模式）
+    std::ofstream ofs(filename);
+    if (!ofs) {
+      A2_LOG_WARN(fmt("Failed to open banned peers file for writing: %s", filename.c_str()));
+      return;
+    }
+    
+    // 写入版本号，使用std::endl确保换行和刷新
+    ofs << "BANNED_PEERS_V1" << std::endl;
+    
+    // 写入封禁列表
+    auto now = global::wallclock();
+    int savedCount = 0;
+    
+    A2_LOG_DEBUG(fmt("Saving banned peers: badPeers_ has %zu entries", badPeers_.size()));
+    
+    for (const auto& entry : badPeers_) {
+      const std::string& ip = entry.first;
+      const Timer& expireTime = entry.second;
+      
+      // 只保存未过期的封禁
+      if (expireTime > now) {
+        // 计算剩余时间（秒）- 注意：expireTime在未来，所以是 expireTime - now
+        // 使用 now.difference(expireTime) 来计算从now到expireTime的时间差
+        auto remaining = now.difference(expireTime);
+        int64_t remainingSeconds = std::chrono::duration_cast<std::chrono::seconds>(remaining).count();
+        
+        A2_LOG_DEBUG(fmt("Checking peer %s: remaining=%ld seconds", 
+                         ip.c_str(), static_cast<long>(remainingSeconds)));
+        
+        // 再次检查剩余时间是否大于0
+        if (remainingSeconds > 0) {
+          // 格式：IP 剩余秒数，使用std::endl确保换行
+          ofs << ip << " " << remainingSeconds << std::endl;
+          savedCount++;
+          A2_LOG_INFO(fmt("Saved banned peer %s with %ld seconds remaining", 
+                          ip.c_str(), static_cast<long>(remainingSeconds)));
+        } else {
+          A2_LOG_DEBUG(fmt("Skipping peer %s with non-positive remaining time: %ld seconds", 
+                           ip.c_str(), static_cast<long>(remainingSeconds)));
+        }
+      } else {
+        A2_LOG_DEBUG(fmt("Skipping expired ban for %s (expireTime <= now)", ip.c_str()));
+      }
+    }
+    
+    ofs.close();
+    A2_LOG_INFO(fmt("Saved %d banned peers (out of %zu total) to %s", 
+                    savedCount, badPeers_.size(), filename.c_str()));
+  } catch (const std::exception& e) {
+    A2_LOG_WARN(fmt("Failed to save banned peers: %s", e.what()));
+  }
+}
+
+void DefaultPeerStorage::loadBannedPeers(const std::string& filename)
+{
+  try {
+    std::ifstream ifs(filename);
+    if (!ifs) {
+      // 文件不存在是正常的（首次运行）
+      A2_LOG_DEBUG(fmt("Banned peers file not found: %s (this is normal for first run)", filename.c_str()));
+      return;
+    }
+    
+    A2_LOG_DEBUG(fmt("Opening banned peers file: %s", filename.c_str()));
+    
+    std::string version;
+    std::getline(ifs, version);
+    
+    A2_LOG_DEBUG(fmt("Read version line: '%s' (length=%zu)", version.c_str(), version.size()));
+    
+    // 去除可能的回车符（Windows文本文件）
+    if (!version.empty() && version.back() == '\r') {
+      version.pop_back();
+      A2_LOG_DEBUG(fmt("Removed trailing \\r, version is now: '%s'", version.c_str()));
+    }
+    
+    if (version != "BANNED_PEERS_V1") {
+      A2_LOG_WARN(fmt("Unknown banned peers file version: '%s' (expected 'BANNED_PEERS_V1')", version.c_str()));
+      return;
+    }
+    
+    auto now = global::wallclock();
+    int loadedCount = 0;
+    int skippedCount = 0;
+    int lineNumber = 1;
+    
+    std::string line;
+    while (std::getline(ifs, line)) {
+      lineNumber++;
+      
+      // 去除可能的回车符
+      if (!line.empty() && line.back() == '\r') {
+        line.pop_back();
+      }
+      
+      // 跳过空行
+      if (line.empty()) {
+        A2_LOG_DEBUG(fmt("Line %d: empty line, skipping", lineNumber));
+        continue;
+      }
+      
+      A2_LOG_DEBUG(fmt("Line %d: '%s'", lineNumber, line.c_str()));
+      
+      std::istringstream iss(line);
+      std::string ip;
+      int64_t remainingSeconds;
+      
+      if (iss >> ip >> remainingSeconds) {
+        A2_LOG_DEBUG(fmt("Line %d: parsed IP='%s', remaining=%ld seconds", 
+                         lineNumber, ip.c_str(), static_cast<long>(remainingSeconds)));
+        
+        if (remainingSeconds > 0) {
+          Timer expireTime = now;
+          expireTime.advance(std::chrono::seconds(remainingSeconds));
+          badPeers_[ip] = std::move(expireTime);
+          loadedCount++;
+          A2_LOG_INFO(fmt("Loaded banned peer %s with %ld seconds remaining", 
+                          ip.c_str(), static_cast<long>(remainingSeconds)));
+        } else {
+          skippedCount++;
+          A2_LOG_DEBUG(fmt("Skipped expired ban for %s (remaining: %ld)", 
+                           ip.c_str(), static_cast<long>(remainingSeconds)));
+        }
+      } else {
+        A2_LOG_WARN(fmt("Line %d: failed to parse line: '%s'", lineNumber, line.c_str()));
+      }
+    }
+    
+    ifs.close();
+    A2_LOG_INFO(fmt("Loaded %d banned peers from %s (skipped %d expired)", 
+                    loadedCount, filename.c_str(), skippedCount));
+  } catch (const std::exception& e) {
+    A2_LOG_WARN(fmt("Failed to load banned peers: %s", e.what()));
+  }
+}
+
+} // namespace aria2

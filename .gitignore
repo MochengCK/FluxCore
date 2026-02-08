@@ -2,8 +2,6 @@
 *.o
 *.lo
 *.la
-src/
-SRC/
 *.ce
 *.cce
 *.he
