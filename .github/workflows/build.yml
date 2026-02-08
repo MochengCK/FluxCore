@@ -38,7 +38,14 @@ jobs:
     - name: Autoreconf
       working-directory: ${{ env.FLUXCORE_DIR }}
       run: |
+        rm -f configure
         autoreconf -fi -I m4
+    - name: Verify configure
+      working-directory: ${{ env.FLUXCORE_DIR }}
+      run: |
+        if grep -n "ARIA2_ARG_WITH" configure; then
+          exit 1
+        fi
     - name: Configure
       working-directory: ${{ env.FLUXCORE_DIR }}
       run: |
@@ -83,7 +90,14 @@ jobs:
     - name: Autoreconf
       working-directory: ${{ env.FLUXCORE_DIR }}
       run: |
+        rm -f configure
         autoreconf -fi -I m4
+    - name: Verify configure
+      working-directory: ${{ env.FLUXCORE_DIR }}
+      run: |
+        if grep -n "ARIA2_ARG_WITH" configure; then
+          exit 1
+        fi
     - name: Configure
       working-directory: ${{ env.FLUXCORE_DIR }}
       run: |
@@ -142,7 +156,15 @@ jobs:
       shell: msys2 {0}
       working-directory: ${{ env.FLUXCORE_DIR }}
       run: |
+        rm -f configure
         autoreconf -fi -I m4
+    - name: Verify configure
+      shell: msys2 {0}
+      working-directory: ${{ env.FLUXCORE_DIR }}
+      run: |
+        if grep -n "ARIA2_ARG_WITH" configure; then
+          exit 1
+        fi
     - name: Configure
       shell: msys2 {0}
       working-directory: ${{ env.FLUXCORE_DIR }}
