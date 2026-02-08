@@ -39,7 +39,10 @@ jobs:
     - name: Autoreconf
       working-directory: ${{ env.FLUXCORE_DIR }}
       run: |
+        rm -rf autom4te.cache
         rm -f configure
+        export ACLOCAL_PATH="$(pwd)/m4"
+        aclocal -I m4
         autoreconf -fi -I m4
     - name: Verify configure
       working-directory: ${{ env.FLUXCORE_DIR }}
@@ -94,7 +97,10 @@ jobs:
     - name: Autoreconf
       working-directory: ${{ env.FLUXCORE_DIR }}
       run: |
+        rm -rf autom4te.cache
         rm -f configure
+        export ACLOCAL_PATH="$(pwd)/m4"
+        aclocal -I m4
         autoreconf -fi -I m4
     - name: Verify configure
       working-directory: ${{ env.FLUXCORE_DIR }}
@@ -160,7 +166,10 @@ jobs:
       shell: msys2 {0}
       working-directory: ${{ env.FLUXCORE_DIR }}
       run: |
+        rm -rf autom4te.cache
         rm -f configure
+        export ACLOCAL_PATH="$(pwd)/m4"
+        aclocal -I m4
         autoreconf -fi -I m4
     - name: Verify configure
       shell: msys2 {0}
