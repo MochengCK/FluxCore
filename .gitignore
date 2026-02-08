@@ -6,7 +6,6 @@
 *.cce
 *.he
 depcomp
-*.m4
 Makefile
 Makefile.in
 missing
