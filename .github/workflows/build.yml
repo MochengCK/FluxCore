@@ -4,7 +4,15 @@ on: [push, pull_request]
 
 jobs:
   build-linux:
-    runs-on: ubuntu-22.04
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            arch: x64
+          - runner: ubuntu-22.04-arm64
+            arch: arm64
     steps:
     - uses: actions/checkout@v6
     - name: Detect source directory
@@ -43,7 +51,7 @@ jobs:
         rm -f configure
         export ACLOCAL_PATH="$(pwd)/m4"
         aclocal -I m4
-        autoreconf -fi -I m4
+        AUTOPOINT=true autoreconf -fi -I m4
     - name: Verify configure
       working-directory: ${{ env.FLUXCORE_DIR }}
       run: |
@@ -69,11 +77,19 @@ jobs:
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
-        name: FluxCore-linux
+        name: FluxCore-linux-${{ matrix.arch }}
         path: ${{ env.FLUXCORE_DIR }}/src/aria2c
 
   build-macos:
-    runs-on: macos-14
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-13
+            arch: x64
+          - runner: macos-14
+            arch: arm64
     steps:
     - uses: actions/checkout@v6
     - name: Detect source directory
@@ -101,7 +117,7 @@ jobs:
         rm -f configure
         export ACLOCAL_PATH="$(pwd)/m4"
         aclocal -I m4
-        autoreconf -fi -I m4
+        AUTOPOINT=true autoreconf -fi -I m4
     - name: Verify configure
       working-directory: ${{ env.FLUXCORE_DIR }}
       run: |
@@ -126,30 +142,58 @@ jobs:
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
-        name: FluxCore-macos
+        name: FluxCore-macos-${{ matrix.arch }}
         path: ${{ env.FLUXCORE_DIR }}/src/aria2c
 
   build-windows:
     runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            msystem: MINGW64
+            mingw_dir: mingw64
+            host: x86_64-w64-mingw32
+            packages: >-
+              mingw-w64-x86_64-toolchain
+              autoconf
+              automake
+              libtool
+              pkg-config
+              gettext
+              mingw-w64-x86_64-openssl
+              mingw-w64-x86_64-libssh2
+              mingw-w64-x86_64-c-ares
+              mingw-w64-x86_64-sqlite3
+              mingw-w64-x86_64-expat
+              mingw-w64-x86_64-gmp
+              mingw-w64-x86_64-zlib
+          - arch: ia32
+            msystem: MINGW32
+            mingw_dir: mingw32
+            host: i686-w64-mingw32
+            packages: >-
+              mingw-w64-i686-toolchain
+              autoconf
+              automake
+              libtool
+              pkg-config
+              gettext
+              mingw-w64-i686-openssl
+              mingw-w64-i686-libssh2
+              mingw-w64-i686-c-ares
+              mingw-w64-i686-sqlite3
+              mingw-w64-i686-expat
+              mingw-w64-i686-gmp
+              mingw-w64-i686-zlib
     steps:
     - uses: actions/checkout@v6
     - uses: msys2/setup-msys2@v2
       with:
+        msystem: ${{ matrix.msystem }}
         update: true
-        install: >-
-          mingw-w64-x86_64-toolchain
-          autoconf
-          automake
-          libtool
-          pkg-config
-          gettext
-          mingw-w64-x86_64-openssl
-          mingw-w64-x86_64-libssh2
-          mingw-w64-x86_64-c-ares
-          mingw-w64-x86_64-sqlite3
-          mingw-w64-x86_64-expat
-          mingw-w64-x86_64-gmp
-          mingw-w64-x86_64-zlib
+        install: ${{ matrix.packages }}
     - name: Detect source directory
       shell: msys2 {0}
       run: |
@@ -183,7 +227,7 @@ jobs:
       working-directory: ${{ env.FLUXCORE_DIR }}
       run: |
         ./configure \
-          --host=x86_64-w64-mingw32 \
+          --host=${{ matrix.host }} \
           --without-included-gettext \
           --disable-nls \
           --with-libcares \
@@ -199,10 +243,10 @@ jobs:
           --without-libgcrypt \
           --without-libnettle \
           ARIA2_STATIC=yes \
-          CPPFLAGS="-I/mingw64/include" \
-          LDFLAGS="-L/mingw64/lib" \
+          CPPFLAGS="-I/${{ matrix.mingw_dir }}/include" \
+          LDFLAGS="-L/${{ matrix.mingw_dir }}/lib" \
           LIBS="-lcrypt32" \
-          PKG_CONFIG_PATH="/mingw64/lib/pkgconfig"
+          PKG_CONFIG_PATH="/${{ matrix.mingw_dir }}/lib/pkgconfig"
     - name: Build
       shell: msys2 {0}
       working-directory: ${{ env.FLUXCORE_DIR }}
@@ -211,5 +255,5 @@ jobs:
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
-        name: FluxCore-windows
+        name: FluxCore-windows-${{ matrix.arch }}
         path: ${{ env.FLUXCORE_DIR }}/src/aria2c.exe
