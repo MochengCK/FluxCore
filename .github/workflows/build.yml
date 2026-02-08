@@ -118,6 +118,10 @@ jobs:
       run: |
         make -j"$(nproc)"
         strip --strip-unneeded src/fluxcore || true
+    - name: Verify binary
+      working-directory: ${{ env.FLUXCORE_DIR }}
+      run: |
+        ./src/fluxcore -v
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
@@ -190,6 +194,10 @@ jobs:
       run: |
         make -j"$(sysctl -n hw.ncpu)"
         strip -x src/fluxcore || true
+    - name: Verify binary
+      working-directory: ${{ env.FLUXCORE_DIR }}
+      run: |
+        ./src/fluxcore -v
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
@@ -304,6 +312,11 @@ jobs:
       run: |
         make -j"$(nproc)"
         strip -s src/fluxcore.exe || true
+    - name: Verify binary
+      shell: msys2 {0}
+      working-directory: ${{ env.FLUXCORE_DIR }}
+      run: |
+        ./src/fluxcore.exe -v
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
