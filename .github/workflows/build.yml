@@ -204,6 +204,7 @@ jobs:
               automake
               libtool
               pkg-config
+              make
               gettext
               gettext-devel
               xz
