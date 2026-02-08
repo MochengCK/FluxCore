@@ -28,19 +28,7 @@ jobs:
         fi
     - name: Linux setup
       run: |
-        if [ "${{ matrix.arch }}" = "arm64" ]; then
-          sudo dpkg --add-architecture arm64
-          sudo python3 -c 'import pathlib; p=pathlib.Path("/etc/apt/sources.list"); lines=p.read_text().splitlines() if p.exists() else []; out=[("deb [arch=amd64] "+l[4:]) if l.startswith("deb ") and not l.startswith("deb [arch=") else l for l in lines]; p.write_text("\\n".join(out)+("\\n" if out else "")) if p.exists() else None'
-          sudo python3 -c 'import pathlib; p=pathlib.Path("/etc/apt/sources.list.d/ubuntu.sources"); \
-            (p.write_text("Architectures: amd64\\n"+p.read_text()) if p.exists() and "Architectures:" not in p.read_text() else p.write_text("\\n".join(["Architectures: amd64" if line.startswith("Architectures:") else line for line in p.read_text().splitlines()])+"\\n")) if p.exists() else None'
-          printf '%s\n' \
-            'deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy main restricted universe multiverse' \
-            'deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-updates main restricted universe multiverse' \
-            'deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-security main restricted universe multiverse' \
-            'deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-backports main restricted universe multiverse' \
-            | sudo tee /etc/apt/sources.list.d/arm64-ports.list > /dev/null
-        fi
-        sudo apt-get update
+        sudo apt-get update --allow-releaseinfo-change
         if [ "${{ matrix.arch }}" = "arm64" ]; then
           sudo apt-get install \
             g++-12 \
@@ -52,12 +40,12 @@ jobs:
             gettext-base \
             libtool \
             pkgconf \
-            libssl-dev:arm64 \
-            libc-ares-dev:arm64 \
-            zlib1g-dev:arm64 \
-            libsqlite3-dev:arm64 \
-            libssh2-1-dev:arm64 \
-            libexpat1-dev:arm64
+            libssl-dev \
+            libc-ares-dev \
+            zlib1g-dev \
+            libsqlite3-dev \
+            libssh2-1-dev \
+            libexpat1-dev
         else
           sudo apt-get install \
             g++-12 \
