@@ -1075,8 +1075,8 @@ std::unique_ptr<ValueBase> GetPeersRpcMethod::process(const RpcRequest& req,
     }
     
     auto disconnectedPeers = List::g();
-    auto& droppedPeers = defaultPeerStorage->getDroppedPeers();
-    for (auto& peer : droppedPeers) {
+    auto& droppedPeersForBan = defaultPeerStorage->getDroppedPeers();
+    for (auto& peer : droppedPeersForBan) {
       auto peerEntry = Dict::g();
       peerEntry->put(KEY_PEER_ID, util::torrentPercentEncode(peer->getPeerId(),
                                                              PEER_ID_LENGTH));
