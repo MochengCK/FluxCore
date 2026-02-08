@@ -11,7 +11,7 @@ jobs:
         include:
           - runner: ubuntu-22.04
             arch: x64
-          - runner: ubuntu-22.04-arm64
+          - runner: ubuntu-24.04-arm64
             arch: arm64
     steps:
     - uses: actions/checkout@v6
@@ -51,7 +51,11 @@ jobs:
         rm -f configure
         export ACLOCAL_PATH="$(pwd)/m4"
         aclocal -I m4
-        autoreconf -fi -I m4
+        if [ -f /usr/share/gettext/archive.dir.tar.xz ]; then
+          autoreconf -fi -I m4
+        else
+          AUTOPOINT=true autoreconf -fi -I m4
+        fi
     - name: Verify configure
       working-directory: ${{ env.FLUXCORE_DIR }}
       run: |
