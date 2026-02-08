@@ -99,7 +99,7 @@ typedef std::unique_ptr<STACK_OF(X509), x509_sk_deleter> x509_sk_t;
 bool addWindowsSystemCertStore(SSL_CTX* ctx, const char* storeName,
                                size_t& added)
 {
-  HCERTSTORE store = CertOpenSystemStoreA(nullptr, storeName);
+  HCERTSTORE store = CertOpenSystemStoreA(0, storeName);
   if (!store) {
     return false;
   }
