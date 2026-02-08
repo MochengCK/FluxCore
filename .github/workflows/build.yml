@@ -30,15 +30,16 @@ jobs:
       run: |
         if [ "${{ matrix.arch }}" = "arm64" ]; then
           sudo dpkg --add-architecture arm64
-          if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
-            sudo mv /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list.d/ubuntu.sources.disabled
-          fi
+          sudo python3 -c 'import pathlib,re; p=pathlib.Path("/etc/apt/sources.list"); \
+            p.write_text(re.sub(r"^deb\\s+(?!\\[arch=)", "deb [arch=amd64] ", p.read_text(), flags=re.M)) if p.exists() else None'
+          sudo python3 -c 'import pathlib; p=pathlib.Path("/etc/apt/sources.list.d/ubuntu.sources"); \
+            (p.write_text("Architectures: amd64\\n"+p.read_text()) if p.exists() and "Architectures:" not in p.read_text() else p.write_text("\\n".join(["Architectures: amd64" if line.startswith("Architectures:") else line for line in p.read_text().splitlines()])+"\\n")) if p.exists() else None'
           printf '%s\n' \
             'deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy main restricted universe multiverse' \
             'deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-updates main restricted universe multiverse' \
             'deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-security main restricted universe multiverse' \
             'deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-backports main restricted universe multiverse' \
-            | sudo tee /etc/apt/sources.list > /dev/null
+            | sudo tee /etc/apt/sources.list.d/arm64-ports.list > /dev/null
         fi
         sudo apt-get update
         if [ "${{ matrix.arch }}" = "arm64" ]; then
@@ -52,6 +53,8 @@ jobs:
             gettext-base \
             libtool \
             pkgconf \
+            gcc-aarch64-linux-gnu \
+            g++-aarch64-linux-gnu \
             libssl-dev:arm64 \
             libc-ares-dev:arm64 \
             zlib1g-dev:arm64 \
