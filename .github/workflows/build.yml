@@ -31,6 +31,21 @@ jobs:
         if [ "${{ matrix.arch }}" = "arm64" ]; then
           sudo dpkg --add-architecture arm64
           sudo sed -E -i 's|^deb (https?://)|deb [arch=amd64] \1|g' /etc/apt/sources.list
+          if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
+            sudo awk '
+              BEGIN { in_block = 0; has_arch = 0 }
+              /^Types:/ { in_block = 1; has_arch = 0; print; next }
+              in_block && /^Architectures:/ { has_arch = 1; print; next }
+              in_block && /^$/ {
+                if (!has_arch) print "Architectures: amd64"
+                in_block = 0
+                print
+                next
+              }
+              { print }
+              END { if (in_block && !has_arch) print "Architectures: amd64" }
+            ' /etc/apt/sources.list.d/ubuntu.sources | sudo tee /etc/apt/sources.list.d/ubuntu.sources > /dev/null
+          fi
           printf '%s\n' \
             'deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy main restricted universe multiverse' \
             'deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-updates main restricted universe multiverse' \
