@@ -51,7 +51,7 @@ jobs:
         rm -f configure
         export ACLOCAL_PATH="$(pwd)/m4"
         aclocal -I m4
-        AUTOPOINT=true autoreconf -fi -I m4
+        autoreconf -fi -I m4
     - name: Verify configure
       working-directory: ${{ env.FLUXCORE_DIR }}
       run: |
@@ -117,7 +117,7 @@ jobs:
         rm -f configure
         export ACLOCAL_PATH="$(pwd)/m4"
         aclocal -I m4
-        AUTOPOINT=true autoreconf -fi -I m4
+        autoreconf -fi -I m4
     - name: Verify configure
       working-directory: ${{ env.FLUXCORE_DIR }}
       run: |
