@@ -1022,6 +1022,7 @@ std::unique_ptr<ValueBase> GetPeersRpcMethod::process(const RpcRequest& req,
     auto result = Dict::g();
     result->put("connected", List::g());
     result->put("attempting", List::g());
+    result->put("disconnected", List::g());
     result->put("banned", List::g());
     return std::move(result);
   }
@@ -1059,10 +1060,48 @@ std::unique_ptr<ValueBase> GetPeersRpcMethod::process(const RpcRequest& req,
       peerEntry->put(KEY_UPLOAD_SPEED, Integer::g(0));
       peerEntry->put(KEY_DOWNLOAD_LENGTH, Integer::g(0));
       peerEntry->put(KEY_CONNECTION_TIME, Integer::g(0));
+      peerEntry->put("attempts", Integer::g(defaultPeerStorage->getAttemptCount(
+          peer->getIPAddress(), peer->getOrigPort())));
+      peerEntry->put("fails", Integer::g(defaultPeerStorage->getFailCount(
+          peer->getIPAddress(), peer->getOrigPort())));
+      peerEntry->put("tcpFails", Integer::g(defaultPeerStorage->getTcpFailCount(
+          peer->getIPAddress(), peer->getOrigPort())));
+      peerEntry->put("utpFails", Integer::g(defaultPeerStorage->getUtpFailCount(
+          peer->getIPAddress(), peer->getOrigPort())));
+      peerEntry->put("udpFails", Integer::g(defaultPeerStorage->getUdpFailCount(
+          peer->getIPAddress(), peer->getOrigPort())));
       peerEntry->put("status", "attempting");
       attemptingPeers->append(std::move(peerEntry));
     }
     
+    auto disconnectedPeers = List::g();
+    auto& droppedPeers = defaultPeerStorage->getDroppedPeers();
+    for (auto& peer : droppedPeers) {
+      auto peerEntry = Dict::g();
+      peerEntry->put(KEY_PEER_ID, util::torrentPercentEncode(peer->getPeerId(),
+                                                             PEER_ID_LENGTH));
+      peerEntry->put(KEY_IP, peer->getIPAddress());
+      peerEntry->put(KEY_PORT, util::uitos(peer->getPort()));
+      peerEntry->put(KEY_BITFIELD, "");
+      peerEntry->put(KEY_DOWNLOAD_SPEED, Integer::g(0));
+      peerEntry->put(KEY_UPLOAD_SPEED, Integer::g(0));
+      peerEntry->put(KEY_DOWNLOAD_LENGTH, Integer::g(0));
+      peerEntry->put(KEY_CONNECTION_TIME, Integer::g(0));
+      peerEntry->put("attempts", Integer::g(defaultPeerStorage->getAttemptCount(
+          peer->getIPAddress(), peer->getOrigPort())));
+      peerEntry->put("fails", Integer::g(defaultPeerStorage->getFailCount(
+          peer->getIPAddress(), peer->getOrigPort())));
+      peerEntry->put("tcpFails", Integer::g(defaultPeerStorage->getTcpFailCount(
+          peer->getIPAddress(), peer->getOrigPort())));
+      peerEntry->put("utpFails", Integer::g(defaultPeerStorage->getUtpFailCount(
+          peer->getIPAddress(), peer->getOrigPort())));
+      peerEntry->put("udpFails", Integer::g(defaultPeerStorage->getUdpFailCount(
+          peer->getIPAddress(), peer->getOrigPort())));
+      peerEntry->put("status", "disconnected");
+      disconnectedPeers->append(std::move(peerEntry));
+    }
+    result->put("disconnected", std::move(disconnectedPeers));
+
     // 3. 已封禁节点 (banned peers)
     auto bannedPeers = List::g();
     auto& badPeers = defaultPeerStorage->getBadPeers();
@@ -1141,6 +1180,7 @@ std::unique_ptr<ValueBase> GetPeersRpcMethod::process(const RpcRequest& req,
   } else {
     // 如果不是DefaultPeerStorage，返回空列表
     result->put("banned", List::g());
+    result->put("disconnected", List::g());
   }
   result->put("attempting", std::move(attemptingPeers));
   

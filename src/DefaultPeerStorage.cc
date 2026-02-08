@@ -72,6 +72,48 @@ DefaultPeerStorage::~DefaultPeerStorage()
   assert(uniqPeers_.size() == unusedPeers_.size() + usedPeers_.size());
 }
 
+std::string DefaultPeerStorage::peerKey(const std::string& ipaddr, uint16_t port) const
+{
+  std::ostringstream oss;
+  oss << ipaddr << ":" << port;
+  return oss.str();
+}
+
+uint32_t DefaultPeerStorage::getAttemptCount(const std::string& ipaddr, uint16_t port) const
+{
+  const auto key = peerKey(ipaddr, port);
+  auto it = attemptStats_.find(key);
+  return it == attemptStats_.end() ? 0 : it->second;
+}
+
+uint32_t DefaultPeerStorage::getFailCount(const std::string& ipaddr, uint16_t port) const
+{
+  const auto key = peerKey(ipaddr, port);
+  auto it = failStats_.find(key);
+  return it == failStats_.end() ? 0 : it->second;
+}
+
+uint32_t DefaultPeerStorage::getTcpFailCount(const std::string& ipaddr, uint16_t port) const
+{
+  const auto key = peerKey(ipaddr, port);
+  auto it = tcpFailStats_.find(key);
+  return it == tcpFailStats_.end() ? 0 : it->second;
+}
+
+uint32_t DefaultPeerStorage::getUtpFailCount(const std::string& ipaddr, uint16_t port) const
+{
+  const auto key = peerKey(ipaddr, port);
+  auto it = utpFailStats_.find(key);
+  return it == utpFailStats_.end() ? 0 : it->second;
+}
+
+uint32_t DefaultPeerStorage::getUdpFailCount(const std::string& ipaddr, uint16_t port) const
+{
+  const auto key = peerKey(ipaddr, port);
+  auto it = udpFailStats_.find(key);
+  return it == udpFailStats_.end() ? 0 : it->second;
+}
+
 size_t DefaultPeerStorage::countAllPeer() const
 {
   return unusedPeers_.size() + usedPeers_.size();
@@ -310,6 +352,8 @@ std::shared_ptr<Peer> DefaultPeerStorage::checkoutPeer(cuid_t cuid)
     
     peer->usedBy(cuid);
     usedPeers_.insert(peer);
+    const auto key = peerKey(peer->getIPAddress(), peer->getOrigPort());
+    attemptStats_[key] += 1;
     A2_LOG_DEBUG(fmt("Checkout peer %s:%u to CUID#%" PRId64,
                      peer->getIPAddress().c_str(), peer->getOrigPort(),
                      peer->usedBy()));
@@ -333,6 +377,9 @@ void DefaultPeerStorage::onReturningPeer(const std::shared_ptr<Peer>& peer)
       peer->setFirstContactTime(Timer::zero());
       peer->startDrop();
       addDroppedPeer(peer);
+      const auto key = peerKey(peer->getIPAddress(), peer->getOrigPort());
+      failStats_[key] += 1;
+      tcpFailStats_[key] += 1;
     }
     // Execute choking algorithm if unchoked and interested peer is
     // disconnected.

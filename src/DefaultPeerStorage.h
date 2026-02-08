@@ -78,6 +78,12 @@ private:
   void addUniqPeer(const std::shared_ptr<Peer>& peer);
 
   void addDroppedPeer(const std::shared_ptr<Peer>& peer);
+  std::map<std::string, uint32_t> attemptStats_;
+  std::map<std::string, uint32_t> failStats_;
+  std::map<std::string, uint32_t> tcpFailStats_;
+  std::map<std::string, uint32_t> utpFailStats_;
+  std::map<std::string, uint32_t> udpFailStats_;
+  std::string peerKey(const std::string& ipaddr, uint16_t port) const;
 
 public:
   DefaultPeerStorage();
@@ -113,6 +119,11 @@ public:
   void removeBadPeer(const std::string& ipaddr) { badPeers_.erase(ipaddr); }
 
   const std::map<std::string, Timer>& getBadPeers() const { return badPeers_; }
+  uint32_t getAttemptCount(const std::string& ipaddr, uint16_t port) const;
+  uint32_t getFailCount(const std::string& ipaddr, uint16_t port) const;
+  uint32_t getTcpFailCount(const std::string& ipaddr, uint16_t port) const;
+  uint32_t getUtpFailCount(const std::string& ipaddr, uint16_t port) const;
+  uint32_t getUdpFailCount(const std::string& ipaddr, uint16_t port) const;
   
   // 保存封禁列表到文件
   void saveBannedPeers(const std::string& filename);
