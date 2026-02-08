@@ -7,6 +7,17 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
     - uses: actions/checkout@v6
+    - name: Detect source directory
+      run: |
+        if [ -f "configure.ac" ] && [ -d "src" ]; then
+          echo "FLUXCORE_DIR=." >> $GITHUB_ENV
+        elif [ -f "FluxCore/configure.ac" ] && [ -d "FluxCore/src" ]; then
+          echo "FLUXCORE_DIR=FluxCore" >> $GITHUB_ENV
+        elif [ -f "FluxCore/FluxCore/configure.ac" ] && [ -d "FluxCore/FluxCore/src" ]; then
+          echo "FLUXCORE_DIR=FluxCore/FluxCore" >> $GITHUB_ENV
+        else
+          exit 1
+        fi
     - name: Linux setup
       run: |
         sudo apt-get update
@@ -25,9 +36,11 @@ jobs:
           libssh2-1-dev \
           libexpat1-dev
     - name: Autoreconf
+      working-directory: ${{ env.FLUXCORE_DIR }}
       run: |
         autoreconf -i
     - name: Configure
+      working-directory: ${{ env.FLUXCORE_DIR }}
       run: |
         ./configure \
           --with-openssl \
@@ -39,26 +52,40 @@ jobs:
           --without-libxml2 \
           --disable-nls
     - name: Build
+      working-directory: ${{ env.FLUXCORE_DIR }}
       run: |
         make -j"$(nproc)"
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
         name: FluxCore-linux
-        path: src/aria2c
+        path: ${{ env.FLUXCORE_DIR }}/src/aria2c
 
   build-macos:
     runs-on: macos-14
     steps:
     - uses: actions/checkout@v6
+    - name: Detect source directory
+      run: |
+        if [ -f "configure.ac" ] && [ -d "src" ]; then
+          echo "FLUXCORE_DIR=." >> $GITHUB_ENV
+        elif [ -f "FluxCore/configure.ac" ] && [ -d "FluxCore/src" ]; then
+          echo "FLUXCORE_DIR=FluxCore" >> $GITHUB_ENV
+        elif [ -f "FluxCore/FluxCore/configure.ac" ] && [ -d "FluxCore/FluxCore/src" ]; then
+          echo "FLUXCORE_DIR=FluxCore/FluxCore" >> $GITHUB_ENV
+        else
+          exit 1
+        fi
     - name: MacOS setup
       run: |
         brew install gettext openssl libssh2 c-ares sqlite3 \
           autoconf automake pkg-config libtool expat
     - name: Autoreconf
+      working-directory: ${{ env.FLUXCORE_DIR }}
       run: |
         autoreconf -i
     - name: Configure
+      working-directory: ${{ env.FLUXCORE_DIR }}
       run: |
         ./configure \
           --without-openssl --without-gnutls --with-appletls \
@@ -69,13 +96,14 @@ jobs:
           --without-libxml2 \
           --disable-nls
     - name: Build
+      working-directory: ${{ env.FLUXCORE_DIR }}
       run: |
         make -j"$(sysctl -n hw.ncpu)"
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
         name: FluxCore-macos
-        path: src/aria2c
+        path: ${{ env.FLUXCORE_DIR }}/src/aria2c
 
   build-windows:
     runs-on: windows-2022
@@ -98,12 +126,26 @@ jobs:
           mingw-w64-x86_64-expat
           mingw-w64-x86_64-gmp
           mingw-w64-x86_64-zlib
+    - name: Detect source directory
+      shell: msys2 {0}
+      run: |
+        if [ -f "configure.ac" ] && [ -d "src" ]; then
+          echo "FLUXCORE_DIR=." >> $GITHUB_ENV
+        elif [ -f "FluxCore/configure.ac" ] && [ -d "FluxCore/src" ]; then
+          echo "FLUXCORE_DIR=FluxCore" >> $GITHUB_ENV
+        elif [ -f "FluxCore/FluxCore/configure.ac" ] && [ -d "FluxCore/FluxCore/src" ]; then
+          echo "FLUXCORE_DIR=FluxCore/FluxCore" >> $GITHUB_ENV
+        else
+          exit 1
+        fi
     - name: Autoreconf
       shell: msys2 {0}
+      working-directory: ${{ env.FLUXCORE_DIR }}
       run: |
         autoreconf -i
     - name: Configure
       shell: msys2 {0}
+      working-directory: ${{ env.FLUXCORE_DIR }}
       run: |
         ./configure \
           --host=x86_64-w64-mingw32 \
@@ -128,10 +170,11 @@ jobs:
           PKG_CONFIG_PATH="/mingw64/lib/pkgconfig"
     - name: Build
       shell: msys2 {0}
+      working-directory: ${{ env.FLUXCORE_DIR }}
       run: |
         make -j"$(nproc)"
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
         name: FluxCore-windows
-        path: src/aria2c.exe
+        path: ${{ env.FLUXCORE_DIR }}/src/aria2c.exe
