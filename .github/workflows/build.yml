@@ -101,6 +101,9 @@ jobs:
         else
           HOST_FLAG=""
         fi
+        export CFLAGS="-Os -ffunction-sections -fdata-sections"
+        export CXXFLAGS="-Os -ffunction-sections -fdata-sections"
+        export LDFLAGS="-Wl,--gc-sections"
         ./configure $HOST_FLAG \
           --with-openssl \
           --without-gnutls \
@@ -114,6 +117,7 @@ jobs:
       working-directory: ${{ env.FLUXCORE_DIR }}
       run: |
         make -j"$(nproc)"
+        strip --strip-unneeded src/fluxcore || true
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
@@ -170,6 +174,9 @@ jobs:
     - name: Configure
       working-directory: ${{ env.FLUXCORE_DIR }}
       run: |
+        export CFLAGS="-Os -ffunction-sections -fdata-sections"
+        export CXXFLAGS="-Os -ffunction-sections -fdata-sections"
+        export LDFLAGS="-Wl,-dead_strip"
         ./configure \
           --without-openssl --without-gnutls --with-appletls \
           --with-libcares \
@@ -182,6 +189,7 @@ jobs:
       working-directory: ${{ env.FLUXCORE_DIR }}
       run: |
         make -j"$(sysctl -n hw.ncpu)"
+        strip -x src/fluxcore || true
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
@@ -284,8 +292,10 @@ jobs:
           --without-libnettle \
           --disable-dependency-tracking \
           ARIA2_STATIC=yes \
+          CFLAGS="-Os -ffunction-sections -fdata-sections" \
+          CXXFLAGS="-Os -ffunction-sections -fdata-sections" \
           CPPFLAGS="-I/${{ matrix.mingw_dir }}/include" \
-          LDFLAGS="-L/${{ matrix.mingw_dir }}/lib" \
+          LDFLAGS="-Wl,--gc-sections -L/${{ matrix.mingw_dir }}/lib" \
           LIBS="-lcrypt32" \
           PKG_CONFIG_PATH="/${{ matrix.mingw_dir }}/lib/pkgconfig"
     - name: Build
@@ -293,6 +303,7 @@ jobs:
       working-directory: ${{ env.FLUXCORE_DIR }}
       run: |
         make -j"$(nproc)"
+        strip -s src/fluxcore.exe || true
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
