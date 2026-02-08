@@ -30,8 +30,15 @@ jobs:
       run: |
         if [ "${{ matrix.arch }}" = "arm64" ]; then
           sudo dpkg --add-architecture arm64
-          sudo python3 -c 'import pathlib,re;p=pathlib.Path("/etc/apt/sources.list");p.write_text(re.sub(r"https?://(archive|security)\\.ubuntu\\.com/ubuntu","http://ports.ubuntu.com/ubuntu-ports",p.read_text())) if p.exists() else None'
-          sudo python3 -c 'import pathlib,re;p=pathlib.Path("/etc/apt/sources.list.d/ubuntu.sources");p.write_text(re.sub(r"https?://(archive|security)\\.ubuntu\\.com/ubuntu","http://ports.ubuntu.com/ubuntu-ports",p.read_text())) if p.exists() else None'
+          if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
+            sudo mv /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list.d/ubuntu.sources.disabled
+          fi
+          printf '%s\n' \
+            'deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy main restricted universe multiverse' \
+            'deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-updates main restricted universe multiverse' \
+            'deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-security main restricted universe multiverse' \
+            'deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-backports main restricted universe multiverse' \
+            | sudo tee /etc/apt/sources.list > /dev/null
         fi
         sudo apt-get update
         if [ "${{ matrix.arch }}" = "arm64" ]; then
@@ -78,6 +85,13 @@ jobs:
         rm -f configure
         export ACLOCAL_PATH="$(pwd)/m4"
         aclocal -I m4
+        if [ ! -f /usr/share/gettext/archive.dir.tar.xz ] && [ -f /usr/share/gettext/archive.dir.tar.gz ]; then
+          sudo ln -sf /usr/share/gettext/archive.dir.tar.gz /usr/share/gettext/archive.dir.tar.xz
+        fi
+        if [ ! -f /usr/share/gettext/archive.dir.tar.xz ]; then
+          sudo apt-get update
+          sudo apt-get install -y gettext
+        fi
         autopoint --force
         AUTOPOINT=true autoreconf -fi -I m4
     - name: Verify configure
