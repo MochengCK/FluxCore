@@ -118,7 +118,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: FluxCore-linux-${{ matrix.arch }}
-        path: ${{ env.FLUXCORE_DIR }}/src/aria2c
+        path: ${{ env.FLUXCORE_DIR }}/src/fluxcore
 
   build-macos:
     runs-on: ${{ matrix.runner }}
@@ -186,7 +186,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: FluxCore-macos-${{ matrix.arch }}
-        path: ${{ env.FLUXCORE_DIR }}/src/aria2c
+        path: ${{ env.FLUXCORE_DIR }}/src/fluxcore
 
   build-windows:
     runs-on: windows-2022
@@ -297,4 +297,4 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: FluxCore-windows-${{ matrix.arch }}
-        path: ${{ env.FLUXCORE_DIR }}/src/aria2c.exe
+        path: ${{ env.FLUXCORE_DIR }}/src/fluxcore.exe
