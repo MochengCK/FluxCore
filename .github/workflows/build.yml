@@ -30,6 +30,13 @@ jobs:
       run: |
         if [ "${{ matrix.arch }}" = "arm64" ]; then
           sudo dpkg --add-architecture arm64
+          sudo sed -i 's|^deb http://|deb [arch=amd64] http://|g' /etc/apt/sources.list
+          sudo tee /etc/apt/sources.list.d/arm64-ports.list > /dev/null <<'EOF'
+deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy main restricted universe multiverse
+deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-updates main restricted universe multiverse
+deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-security main restricted universe multiverse
+deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-backports main restricted universe multiverse
+EOF
         fi
         sudo apt-get update
         if [ "${{ matrix.arch }}" = "arm64" ]; then
