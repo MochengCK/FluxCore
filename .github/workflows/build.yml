@@ -3,30 +3,15 @@ name: build
 on: [push, pull_request]
 
 jobs:
-  build:
-    strategy:
-      matrix:
-        os: [ubuntu-22.04, macos-14]
-        compiler: [gcc, clang]
-        crypto: [openssl, gnutls]
-        bittorrent: [with-bt, without-bt]
-        exclude:
-        - os: macos-14
-          crypto: gnutls
-        - crypto: openssl
-          bittorrent: without-bt
-
-    runs-on: ${{ matrix.os }}
-
+  build-linux:
+    runs-on: ubuntu-22.04
     steps:
     - uses: actions/checkout@v6
     - name: Linux setup
-      if: runner.os == 'Linux'
       run: |
         sudo apt-get update
         sudo apt-get install \
           g++-12 \
-          clang-15 \
           autoconf \
           automake \
           autotools-dev \
@@ -34,69 +19,119 @@ jobs:
           libtool \
           pkg-config \
           libssl-dev \
-          libgnutls28-dev \
           libc-ares-dev \
           zlib1g-dev \
           libsqlite3-dev \
           libssh2-1-dev \
-          libcppunit-dev
-    - name: MacOS setup
-      if: runner.os == 'macOS'
-      run: |
-        brew install cppunit gettext openssl libssh2 c-ares sqlite3 \
-          autoconf automake pkg-config libtool
-    - name: Setup clang (Linux)
-      if: runner.os == 'Linux' && matrix.compiler == 'clang'
-      run: |
-        echo 'CC=clang-15' >> $GITHUB_ENV
-        echo 'CXX=clang++-15' >> $GITHUB_ENV
-    - name: Setup clang (MacOS)
-      if: runner.os == 'macOS' && matrix.compiler == 'clang'
-      run: |
-        echo 'CC=clang' >> $GITHUB_ENV
-        echo 'CXX=clang++' >> $GITHUB_ENV
-    - name: Setup gcc (Linux)
-      if: runner.os == 'Linux' && matrix.compiler == 'gcc'
-      run: |
-        echo 'CC=gcc-12' >> $GITHUB_ENV
-        echo 'CXX=g++-12' >> $GITHUB_ENV
-    - name: Setup gcc (MacOS)
-      if: runner.os == 'macOS' && matrix.compiler == 'gcc'
-      run: |
-        echo 'CC=gcc' >> $GITHUB_ENV
-        echo 'CXX=g++' >> $GITHUB_ENV
-    - name: Libtool
+          libexpat1-dev
+    - name: Autoreconf
       run: |
         autoreconf -i
-    - name: Setup compiler flags
+    - name: Configure
       run: |
-        asanflags="-fsanitize=address,undefined -fno-sanitize-recover=undefined"
+        ./configure \
+          --with-openssl \
+          --without-gnutls \
+          --with-libcares \
+          --with-libssh2 \
+          --with-sqlite3 \
+          --with-libexpat \
+          --without-libxml2 \
+          --disable-nls
+    - name: Build
+      run: |
+        make -j"$(nproc)"
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: FluxCore-linux
+        path: src/aria2c
 
-        CPPFLAGS="$asanflags -g3"
-        LDFLAGS="$asanflags"
-
-        echo 'CPPFLAGS='"$CPPFLAGS" >> $GITHUB_ENV
-        echo 'LDFLAGS='"$LDFLAGS" >> $GITHUB_ENV
-    - name: Disable BitTorrent
-      if: matrix.bittorrent == 'without-bt'
+  build-macos:
+    runs-on: macos-14
+    steps:
+    - uses: actions/checkout@v6
+    - name: MacOS setup
       run: |
-        FEATURE_FLAGS="$FEATURE_FLAGS --disable-bittorrent"
-
-        echo 'FEATURE_FLAGS='"$FEATURE_FLAGS" >> $GITHUB_ENV
-    - name: Configure autotools (Linux, gnutls)
-      if: runner.os == 'Linux' && matrix.crypto == 'gnutls'
+        brew install gettext openssl libssh2 c-ares sqlite3 \
+          autoconf automake pkg-config libtool expat
+    - name: Autoreconf
       run: |
-        ./configure --with-gnutls --without-openssl $FEATURE_FLAGS
-    - name: Configure autotools (Linux, openssl)
-      if: runner.os == 'Linux' && matrix.crypto == 'openssl'
-      run: |
-        ./configure --without-gnutls --with-openssl $FEATURE_FLAGS
-    - name: Configure autotools (macOS)
-      if: runner.os == 'macOS'
+        autoreconf -i
+    - name: Configure
       run: |
         ./configure \
           --without-openssl --without-gnutls --with-appletls \
+          --with-libcares \
+          --with-libssh2 \
+          --with-sqlite3 \
+          --with-libexpat \
+          --without-libxml2 \
           --disable-nls
-    - name: Build aria2
+    - name: Build
       run: |
-        make -j"$(nproc 2> /dev/null || sysctl -n hw.ncpu)" check
+        make -j"$(sysctl -n hw.ncpu)"
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: FluxCore-macos
+        path: src/aria2c
+
+  build-windows:
+    runs-on: windows-2022
+    steps:
+    - uses: actions/checkout@v6
+    - uses: msys2/setup-msys2@v2
+      with:
+        update: true
+        install: >-
+          mingw-w64-x86_64-toolchain
+          autoconf
+          automake
+          libtool
+          pkg-config
+          gettext
+          mingw-w64-x86_64-openssl
+          mingw-w64-x86_64-libssh2
+          mingw-w64-x86_64-c-ares
+          mingw-w64-x86_64-sqlite3
+          mingw-w64-x86_64-expat
+          mingw-w64-x86_64-gmp
+          mingw-w64-x86_64-zlib
+    - name: Autoreconf
+      shell: msys2 {0}
+      run: |
+        autoreconf -i
+    - name: Configure
+      shell: msys2 {0}
+      run: |
+        ./configure \
+          --host=x86_64-w64-mingw32 \
+          --without-included-gettext \
+          --disable-nls \
+          --with-libcares \
+          --without-gnutls \
+          --without-wintls \
+          --with-openssl \
+          --with-sqlite3 \
+          --without-libxml2 \
+          --with-libexpat \
+          --with-libz \
+          --with-libgmp \
+          --with-libssh2 \
+          --without-libgcrypt \
+          --without-libnettle \
+          ARIA2_STATIC=yes \
+          CPPFLAGS="-I/mingw64/include" \
+          LDFLAGS="-L/mingw64/lib" \
+          LIBS="-lcrypt32" \
+          PKG_CONFIG_PATH="/mingw64/lib/pkgconfig"
+    - name: Build
+      shell: msys2 {0}
+      run: |
+        make -j"$(nproc)"
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: FluxCore-windows
+        path: src/aria2c.exe

@@ -1,6 +1,11 @@
 aria2 - The ultra fast download utility
 =======================================
 
+FluxCore 说明
+------------
+FluxCore 是基于 aria2 的下载引擎，供 LinkCore Download Manager 使用。
+本仓库保留 aria2 原始功能与构建方式，并在其基础上进行适配。
+
 Disclaimer
 ----------
 This program comes with no warranty.
