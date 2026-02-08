@@ -90,12 +90,9 @@ jobs:
       working-directory: ${{ env.FLUXCORE_DIR }}
       run: |
         if [ "${{ matrix.arch }}" = "arm64" ]; then
-          export CC=aarch64-linux-gnu-gcc
-          export CXX=aarch64-linux-gnu-g++
-          export PKG_CONFIG_LIBDIR="/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig"
-          export CPPFLAGS="-I/usr/include/aarch64-linux-gnu"
-          export LDFLAGS="-L/usr/lib/aarch64-linux-gnu"
-          HOST_FLAG="--host=aarch64-linux-gnu"
+          export CC=gcc
+          export CXX=g++
+          HOST_FLAG=""
         else
           HOST_FLAG=""
         fi
