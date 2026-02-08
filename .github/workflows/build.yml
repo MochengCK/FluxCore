@@ -212,26 +212,6 @@ jobs:
               mingw-w64-x86_64-expat
               mingw-w64-x86_64-gmp
               mingw-w64-x86_64-zlib
-          - arch: ia32
-            msystem: MINGW32
-            mingw_dir: mingw32
-            host: i686-w64-mingw32
-            packages: >-
-              mingw-w64-i686-toolchain
-              autoconf
-              automake
-              libtool
-              pkg-config
-              gettext
-              gettext-devel
-              xz
-              mingw-w64-i686-openssl
-              mingw-w64-i686-libssh2
-              mingw-w64-i686-c-ares
-              mingw-w64-i686-sqlite3
-              mingw-w64-i686-expat
-              mingw-w64-i686-gmp
-              mingw-w64-i686-zlib
     steps:
     - uses: actions/checkout@v6
     - uses: msys2/setup-msys2@v2
@@ -271,7 +251,7 @@ jobs:
             fi
           fi
         fi
-        AUTOPOINT=true autoreconf -fi -I m4
+        autoreconf -fi -I m4
     - name: Verify configure
       shell: msys2 {0}
       working-directory: ${{ env.FLUXCORE_DIR }}
