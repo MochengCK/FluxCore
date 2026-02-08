@@ -1,6 +1,6 @@
 SUBDIRS = includes
-bin_PROGRAMS = aria2c
-aria2c_SOURCES = main.cc
+bin_PROGRAMS = fluxcore
+fluxcore_SOURCES = main.cc
 SRCS =  \
 	a2algo.h\
 	a2functional.h\
