@@ -36,6 +36,7 @@
 
 #include <cassert>
 #include <algorithm>
+#include <iterator>
 
 #include "PostDownloadHandler.h"
 #include "DownloadEngine.h"
@@ -396,9 +397,30 @@ void RequestGroup::createInitialCommand(
     }
     
     peerStorage->loadBannedPeers(bannedPeersFile);
-    
-    // 验证加载结果
+
     auto defaultPeerStorage = std::dynamic_pointer_cast<DefaultPeerStorage>(peerStorage);
+    if (defaultPeerStorage) {
+      const std::string& rawBanList = option_->get(PREF_BT_IP_BAN_LIST);
+      if (!rawBanList.empty()) {
+        std::vector<std::pair<std::string::const_iterator,
+                              std::string::const_iterator>>
+            items;
+        util::splitIterM(rawBanList.begin(), rawBanList.end(),
+                         std::back_inserter(items), ",;\r\n\t ", true, false);
+        for (const auto& item : items) {
+          if (item.first == item.second) {
+            continue;
+          }
+          std::string ip(item.first, item.second);
+          if (ip.empty()) {
+            continue;
+          }
+          defaultPeerStorage->addBadPeer(ip);
+        }
+      }
+    }
+
+    // 验证加载结果
     if (defaultPeerStorage) {
       const auto& badPeers = defaultPeerStorage->getBadPeers();
       A2_LOG_INFO(fmt("After loading: %zu banned peers in memory", badPeers.size()));

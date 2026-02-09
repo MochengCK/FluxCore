@@ -481,6 +481,7 @@ extern PrefPtr PREF_BT_HASH_CHECK_SEED;
 extern PrefPtr PREF_BT_MAX_PEERS;
 // values: a string (IP address)
 extern PrefPtr PREF_BT_EXTERNAL_IP;
+extern PrefPtr PREF_BT_IP_BAN_LIST;
 // values: 1*digit '=' a string that your file system recognizes as a file name.
 extern PrefPtr PREF_INDEX_OUT;
 // values: 1*digit

@@ -558,6 +558,11 @@
     "                              DHT in a private network. Although this function\n" \
     "                              is named 'external', it can accept any kind of IP\n" \
     "                              addresses.")
+#define TEXT_BT_IP_BAN_LIST                                            \
+  _(" --bt-ip-ban-list=LIST       Specify peer IP addresses to ban in\n" \
+    "                              BitTorrent. LIST is a list of IP addresses\n" \
+    "                              separated by comma, semicolon, whitespace,\n" \
+    "                              or newline.")
 #define TEXT_HTTP_AUTH_CHALLENGE                                        \
   _(" --http-auth-challenge[=true|false] Send HTTP authorization header only when it\n" \
     "                              is requested by the server. If false is set, then\n" \

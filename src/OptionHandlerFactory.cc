@@ -1509,6 +1509,16 @@ std::vector<OptionHandler*> OptionHandlerFactory::createOptionHandlers()
     handlers.push_back(op);
   }
   {
+    OptionHandler* op(new DefaultOptionHandler(
+        PREF_BT_IP_BAN_LIST, TEXT_BT_IP_BAN_LIST, NO_DEFAULT_VALUE,
+        "IP address,..."));
+    op->addTag(TAG_BITTORRENT);
+    op->setInitialOption(true);
+    op->setChangeGlobalOption(true);
+    op->setChangeOptionForReserved(true);
+    handlers.push_back(op);
+  }
+  {
     OptionHandler* op(new BooleanOptionHandler(
         PREF_BT_FORCE_ENCRYPTION, TEXT_BT_FORCE_ENCRYPTION, A2_V_FALSE,
         OptionHandler::OPT_ARG));
