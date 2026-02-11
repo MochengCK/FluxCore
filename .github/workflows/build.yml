@@ -122,11 +122,31 @@ jobs:
       working-directory: ${{ env.FLUXCORE_DIR }}
       run: |
         ./src/fluxcore -v
+    - name: Collect Linux runtime libs
+      shell: bash
+      run: |
+        set -euo pipefail
+        OUT_DIR="dist/FluxCore-linux-${{ matrix.arch }}"
+        BIN_PATH="${{ env.FLUXCORE_DIR }}/src/fluxcore"
+        mkdir -p "$OUT_DIR/lib"
+        cp -v "$BIN_PATH" "$OUT_DIR/fluxcore"
+        chmod +x "$OUT_DIR/fluxcore" || true
+
+        # Bundle key shared libs so downstream app packaging can run on hosts missing them.
+        ldd "$BIN_PATH" | awk '/=> \// {print $1, $3}' | while read -r soname realpath; do
+          case "$soname" in
+            libssh2.so.*|libgcrypt.so.*|libgpg-error.so.*|libgmp.so.*|libcares.so.*|libxml2.so.*|libsqlite3.so.*|libz.so.*|libexpat.so.*)
+              cp -Lv "$realpath" "$OUT_DIR/lib/$soname" || true
+              ;;
+          esac
+        done
+        ls -la "$OUT_DIR"
+        ls -la "$OUT_DIR/lib" || true
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
         name: FluxCore-linux-${{ matrix.arch }}
-        path: ${{ env.FLUXCORE_DIR }}/src/fluxcore
+        path: dist/FluxCore-linux-${{ matrix.arch }}
 
   build-macos:
     runs-on: ${{ matrix.runner }}
