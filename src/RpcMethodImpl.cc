@@ -36,6 +36,7 @@
 
 #include <cassert>
 #include <algorithm>
+#include <cctype>
 #include <sstream>
 
 #include "Logger.h"
@@ -101,6 +102,7 @@ const char KEY_GID[] = "gid";
 const char KEY_ERROR_CODE[] = "errorCode";
 const char KEY_ERROR_MESSAGE[] = "errorMessage";
 const char KEY_STATUS[] = "status";
+const char KEY_TASK_TYPE[] = "taskType";
 const char KEY_TOTAL_LENGTH[] = "totalLength";
 const char KEY_COMPLETED_LENGTH[] = "completedLength";
 const char KEY_DOWNLOAD_SPEED[] = "downloadSpeed";
@@ -167,6 +169,11 @@ const char HINT_DOWNLOAD_FAIL_NOTIFY[] = "task.download-fail-notify";
 const char HINT_STATUS_PAUSED[] = "task.status-paused";
 const char HINT_STATUS_PAUSED_SEEDING[] = "task.status-paused-seeding";
 const char HINT_STATUS_MAGNET_DOWNLOADING[] = "task.status-magnet-downloading";
+const char TYPE_BT[] = "bt";
+const char TYPE_MAGNET[] = "magnet";
+const char TYPE_HTTP[] = "http";
+const char TYPE_HTTPS[] = "https";
+const char TYPE_FTP[] = "ftp";
 } // namespace
 
 namespace {
@@ -631,6 +638,43 @@ bool requested_key(const std::vector<std::string>& keys, const std::string& k)
 {
   return keys.empty() || std::find(keys.begin(), keys.end(), k) != keys.end();
 }
+
+#ifdef ENABLE_BITTORRENT
+bool isMetadataReady(const std::shared_ptr<RequestGroup>& group);
+#endif // ENABLE_BITTORRENT
+
+std::string detectTaskTypeByUri(const std::string& uri)
+{
+  std::string lower(uri);
+  std::transform(lower.begin(), lower.end(), lower.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  if (lower.compare(0, 7, "ftp://") == 0 || lower.compare(0, 8, "ftps://") == 0) {
+    return TYPE_FTP;
+  }
+  if (lower.compare(0, 8, "https://") == 0) {
+    return TYPE_HTTPS;
+  }
+  if (lower.compare(0, 7, "http://") == 0) {
+    return TYPE_HTTP;
+  }
+  if (lower.compare(0, 7, "magnet:") == 0) {
+    return TYPE_MAGNET;
+  }
+  return TYPE_HTTP;
+}
+
+std::string detectTaskTypeFromFileEntries(
+    const std::vector<std::shared_ptr<FileEntry>>& files)
+{
+  if (files.empty() || !files[0]) {
+    return TYPE_HTTP;
+  }
+  auto uris = files[0]->getUris();
+  if (uris.empty()) {
+    return TYPE_HTTP;
+  }
+  return detectTaskTypeByUri(uris[0]);
+}
 } // namespace
 
 void gatherProgressCommon(Dict* entryDict,
@@ -707,6 +751,21 @@ void gatherProgressCommon(Dict* entryDict,
   }
   if (requested_key(keys, KEY_DIR)) {
     entryDict->put(KEY_DIR, group->getOption()->get(PREF_DIR));
+  }
+  if (requested_key(keys, KEY_TASK_TYPE)) {
+    auto& dctx = group->getDownloadContext();
+    std::string taskType = TYPE_HTTP;
+#ifdef ENABLE_BITTORRENT
+    if (dctx && dctx->hasAttribute(CTX_ATTR_BT)) {
+      taskType = isMetadataReady(group) ? TYPE_BT : TYPE_MAGNET;
+    }
+    else
+#endif // ENABLE_BITTORRENT
+    {
+      taskType = dctx ? detectTaskTypeFromFileEntries(dctx->getFileEntries())
+                      : TYPE_HTTP;
+    }
+    entryDict->put(KEY_TASK_TYPE, taskType);
   }
 }
 
@@ -975,6 +1034,23 @@ void gatherStoppedDownload(Dict* entryDict,
     if (ds->result != error_code::REMOVED && ds->result != error_code::FINISHED) {
       entryDict->put(KEY_STATUS_HINT, HINT_DOWNLOAD_FAIL_NOTIFY);
     }
+  }
+  if (requested_key(keys, KEY_TASK_TYPE)) {
+    std::string taskType = TYPE_HTTP;
+#ifdef ENABLE_BITTORRENT
+    auto* attrs = bittorrent::getTorrentAttrs(ds->attrs);
+    if (attrs) {
+      taskType = attrs->metadata.empty() ? TYPE_MAGNET : TYPE_BT;
+    }
+    else if (!ds->infoHash.empty()) {
+      taskType = TYPE_MAGNET;
+    }
+    else
+#endif // ENABLE_BITTORRENT
+    {
+      taskType = detectTaskTypeFromFileEntries(ds->fileEntries);
+    }
+    entryDict->put(KEY_TASK_TYPE, taskType);
   }
   if (requested_key(keys, KEY_FOLLOWED_BY)) {
     if (!ds->followedBy.empty()) {
