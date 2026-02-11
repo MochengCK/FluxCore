@@ -880,7 +880,10 @@ void gatherStatusHintForProgress(Dict* entryDict,
 
   if (hint.empty() && isBt && (isWaiting || isPaused)) {
     const auto hashCheckSeed = group->getOption()->get(PREF_BT_HASH_CHECK_SEED);
-    if (hashCheckSeed == "true") {
+    const int64_t total = group->getTotalLength();
+    const int64_t completed = group->getCompletedLength();
+    const bool done = total > 0 && completed >= total;
+    if (hashCheckSeed == "true" && done) {
       hint = HINT_BT_CHECKING_LOCAL_DATA;
     }
   }
