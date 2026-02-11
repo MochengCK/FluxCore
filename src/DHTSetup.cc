@@ -76,6 +76,28 @@
 
 namespace aria2 {
 
+namespace {
+
+std::vector<std::pair<std::string, uint16_t>> getDefaultDHTEntryPoints(int family)
+{
+  if (family == AF_INET6) {
+    return {
+        {"dht.transmissionbt.com", 6881},
+        {"router.bittorrent.com", 6881},
+        {"router.utorrent.com", 6881},
+    };
+  }
+
+  return {
+      {"dht.transmissionbt.com", 6881},
+      {"router.bittorrent.com", 6881},
+      {"router.utorrent.com", 6881},
+      {"router.silotis.us", 6881},
+  };
+}
+
+} // namespace
+
 DHTSetup::DHTSetup() = default;
 
 DHTSetup::~DHTSetup() = default;
@@ -182,18 +204,22 @@ DHTSetup::setup(DownloadEngine* e, int family)
     factory->setLocalNode(localNode);
     factory->setBtRegistry(e->getBtRegistry().get());
 
-    PrefPtr prefEntryPointHost = family == AF_INET ? PREF_DHT_ENTRY_POINT_HOST
-                                                   : PREF_DHT_ENTRY_POINT_HOST6;
-    if (!e->getOption()->get(prefEntryPointHost).empty()) {
-      {
-        PrefPtr prefEntryPointPort = family == AF_INET
-                                         ? PREF_DHT_ENTRY_POINT_PORT
-                                         : PREF_DHT_ENTRY_POINT_PORT6;
-        std::pair<std::string, uint16_t> addr(
-            e->getOption()->get(prefEntryPointHost),
-            e->getOption()->getAsInt(prefEntryPointPort));
-        std::vector<std::pair<std::string, uint16_t>> entryPoints;
-        entryPoints.push_back(addr);
+    {
+      PrefPtr prefEntryPointHost = family == AF_INET ? PREF_DHT_ENTRY_POINT_HOST
+                                                     : PREF_DHT_ENTRY_POINT_HOST6;
+      PrefPtr prefEntryPointPort =
+          family == AF_INET ? PREF_DHT_ENTRY_POINT_PORT : PREF_DHT_ENTRY_POINT_PORT6;
+      std::vector<std::pair<std::string, uint16_t>> entryPoints;
+
+      if (!e->getOption()->get(prefEntryPointHost).empty()) {
+        entryPoints.emplace_back(e->getOption()->get(prefEntryPointHost),
+                                 e->getOption()->getAsInt(prefEntryPointPort));
+      }
+      else {
+        entryPoints = getDefaultDHTEntryPoints(family);
+      }
+
+      if (!entryPoints.empty()) {
         auto command = make_unique<DHTEntryPointNameResolveCommand>(
             e->newCUID(), e, family, entryPoints);
         command->setBootstrapEnabled(true);
@@ -203,9 +229,6 @@ DHTSetup::setup(DownloadEngine* e, int family)
         command->setLocalNode(localNode);
         tempCommands.push_back(std::move(command));
       }
-    }
-    else {
-      A2_LOG_INFO("No DHT entry point specified.");
     }
     {
       auto command = make_unique<DHTInteractionCommand>(e->newCUID(), e);

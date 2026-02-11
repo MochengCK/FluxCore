@@ -40,7 +40,7 @@
 namespace aria2 {
 
 namespace {
-const size_t NUM_CONCURRENT_TASK = 15;
+const size_t NUM_CONCURRENT_TASK = 24;
 } // namespace
 
 DHTTaskQueueImpl::DHTTaskQueueImpl()

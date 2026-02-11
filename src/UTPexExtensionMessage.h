@@ -115,7 +115,7 @@ public:
 
   size_t getMaxDroppedPeer() const { return maxDroppedPeer_; }
 
-  constexpr static auto DEFAULT_INTERVAL = 1_min;
+  constexpr static auto DEFAULT_INTERVAL = 20_s;
 };
 
 } // namespace aria2

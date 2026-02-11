@@ -1479,7 +1479,7 @@ std::vector<OptionHandler*> OptionHandlerFactory::createOptionHandlers()
   }
   {
     OptionHandler* op(new BooleanOptionHandler(PREF_BT_ENABLE_LPD,
-                                               TEXT_BT_ENABLE_LPD, A2_V_FALSE,
+                                               TEXT_BT_ENABLE_LPD, A2_V_TRUE,
                                                OptionHandler::OPT_ARG));
     op->addTag(TAG_BITTORRENT);
     op->setInitialOption(true);
@@ -1784,7 +1784,7 @@ std::vector<OptionHandler*> OptionHandlerFactory::createOptionHandlers()
   }
   {
     OptionHandler* op(new BooleanOptionHandler(PREF_ENABLE_DHT6,
-                                               TEXT_ENABLE_DHT6, A2_V_FALSE,
+                                               TEXT_ENABLE_DHT6, A2_V_TRUE,
                                                OptionHandler::OPT_ARG));
     op->addTag(TAG_BASIC);
     op->addTag(TAG_BITTORRENT);
