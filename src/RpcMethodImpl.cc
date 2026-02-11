@@ -1038,9 +1038,11 @@ void gatherStoppedDownload(Dict* entryDict,
   if (requested_key(keys, KEY_TASK_TYPE)) {
     std::string taskType = TYPE_HTTP;
 #ifdef ENABLE_BITTORRENT
-    auto* attrs = bittorrent::getTorrentAttrs(ds->attrs);
-    if (attrs) {
-      taskType = attrs->metadata.empty() ? TYPE_MAGNET : TYPE_BT;
+    const bool hasBtAttrs = ds->attrs.size() > CTX_ATTR_BT && ds->attrs[CTX_ATTR_BT];
+    if (hasBtAttrs) {
+      const auto* btAttrs =
+          static_cast<TorrentAttribute*>(ds->attrs[CTX_ATTR_BT].get());
+      taskType = (btAttrs && !btAttrs->metadata.empty()) ? TYPE_BT : TYPE_MAGNET;
     }
     else if (!ds->infoHash.empty()) {
       taskType = TYPE_MAGNET;
