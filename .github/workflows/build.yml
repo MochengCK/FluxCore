@@ -143,7 +143,7 @@ jobs:
         ls -la "$OUT_DIR"
         ls -la "$OUT_DIR/lib" || true
     - name: Upload artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
         name: FluxCore-linux-${{ matrix.arch }}
         path: dist/FluxCore-linux-${{ matrix.arch }}
@@ -276,7 +276,7 @@ jobs:
         ls -la "$OUT_DIR"
         ls -la "$OUT_DIR/lib" || true
     - name: Upload artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
         name: FluxCore-macos-${{ matrix.arch }}
         path: dist/FluxCore-macos-${{ matrix.arch }}
@@ -395,7 +395,7 @@ jobs:
       run: |
         ./src/fluxcore.exe -v
     - name: Upload artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
         name: FluxCore-windows-${{ matrix.arch }}
         path: ${{ env.FLUXCORE_DIR }}/src/fluxcore.exe
