@@ -156,6 +156,17 @@ const char KEY_INCOMING[] = "incoming";
 const char KEY_LOCAL_PEER[] = "localPeer";
 const char KEY_EXTENDED_MESSAGING[] = "extendedMessaging";
 const char KEY_FAST_EXTENSION[] = "fastExtension";
+const char KEY_STATUS_HINT[] = "statusHint";
+const char KEY_STATUS_RIGHT_TEXT[] = "statusRightText";
+
+const char HINT_BT_SEEDING_CONTINUE[] = "task.bt-seeding-continue";
+const char HINT_MAGNET_FETCHING_METADATA[] = "task.magnet-fetching-metadata";
+const char HINT_WAITING_DOWNLOAD_DATA[] = "task.waiting-download-data";
+const char HINT_BT_CHECKING_LOCAL_DATA[] = "task.bt-checking-local-data";
+const char HINT_DOWNLOAD_FAIL_NOTIFY[] = "task.download-fail-notify";
+const char HINT_STATUS_PAUSED[] = "task.status-paused";
+const char HINT_STATUS_PAUSED_SEEDING[] = "task.status-paused-seeding";
+const char HINT_STATUS_MAGNET_DOWNLOADING[] = "task.status-magnet-downloading";
 } // namespace
 
 namespace {
@@ -700,6 +711,23 @@ void gatherProgressCommon(Dict* entryDict,
 }
 
 #ifdef ENABLE_BITTORRENT
+namespace {
+bool isMetadataReady(const std::shared_ptr<RequestGroup>& group)
+{
+  if (!group) {
+    return false;
+  }
+  auto& dctx = group->getDownloadContext();
+  if (!dctx || !dctx->hasAttribute(CTX_ATTR_BT)) {
+    return true;
+  }
+  auto* attrs = bittorrent::getTorrentAttrs(dctx);
+  return attrs && !attrs->metadata.empty();
+}
+} // namespace
+#endif // ENABLE_BITTORRENT
+
+#ifdef ENABLE_BITTORRENT
 void gatherBitTorrentMetadata(Dict* btDict, TorrentAttribute* torrentAttrs)
 {
   if (!torrentAttrs->comment.empty()) {
@@ -815,6 +843,74 @@ void gatherPeer(List* peers, const std::shared_ptr<PeerStorage>& ps)
 #endif // ENABLE_BITTORRENT
 
 namespace {
+void gatherStatusHintForProgress(Dict* entryDict,
+                                 const std::shared_ptr<RequestGroup>& group,
+                                 const std::vector<std::string>& keys)
+{
+  if (!group) {
+    return;
+  }
+
+  const bool needHint = requested_key(keys, KEY_STATUS_HINT);
+  const bool needRightText = requested_key(keys, KEY_STATUS_RIGHT_TEXT);
+  if (!needHint && !needRightText) {
+    return;
+  }
+
+  const bool isActive = group->getState() == RequestGroup::STATE_ACTIVE;
+  const bool isPaused = !isActive && group->isPauseRequested();
+  const bool isWaiting = !isActive && !isPaused;
+
+  const auto& dctx = group->getDownloadContext();
+  const bool isBt = dctx && dctx->hasAttribute(CTX_ATTR_BT);
+  const auto stat = group->calculateStat();
+
+  std::string hint;
+
+  if (isBt && isActive && group->isSeeder()) {
+    hint = HINT_BT_SEEDING_CONTINUE;
+  }
+
+#ifdef ENABLE_BITTORRENT
+  if (hint.empty() && isBt && !isMetadataReady(group) &&
+      stat.downloadSpeed <= 0) {
+    hint = HINT_MAGNET_FETCHING_METADATA;
+  }
+#endif // ENABLE_BITTORRENT
+
+  if (hint.empty() && isBt && (isWaiting || isPaused)) {
+    const auto hashCheckSeed = group->getOption()->get(PREF_BT_HASH_CHECK_SEED);
+    if (hashCheckSeed == "true") {
+      hint = HINT_BT_CHECKING_LOCAL_DATA;
+    }
+  }
+
+  if (hint.empty() && !isBt && isActive && stat.downloadSpeed <= 0) {
+    hint = HINT_WAITING_DOWNLOAD_DATA;
+  }
+
+  if (needHint && !hint.empty()) {
+    entryDict->put(KEY_STATUS_HINT, hint);
+  }
+
+  if (needRightText) {
+    std::string rightText;
+    if (isPaused) {
+      rightText = (isBt && group->isSeeder()) ? HINT_STATUS_PAUSED_SEEDING : HINT_STATUS_PAUSED;
+    }
+#ifdef ENABLE_BITTORRENT
+    else if (isActive && isBt && !isMetadataReady(group)) {
+      rightText = HINT_STATUS_MAGNET_DOWNLOADING;
+    }
+#endif // ENABLE_BITTORRENT
+    if (!rightText.empty()) {
+      entryDict->put(KEY_STATUS_RIGHT_TEXT, rightText);
+    }
+  }
+}
+} // namespace
+
+namespace {
 void gatherProgress(Dict* entryDict, const std::shared_ptr<RequestGroup>& group,
                     DownloadEngine* e, const std::vector<std::string>& keys)
 {
@@ -844,6 +940,7 @@ void gatherProgress(Dict* entryDict, const std::shared_ptr<RequestGroup>& group,
       entryDict->put(KEY_VERIFY_PENDING, VLB_TRUE);
     }
   }
+  gatherStatusHintForProgress(entryDict, group, keys);
 }
 } // namespace
 
@@ -869,6 +966,11 @@ void gatherStoppedDownload(Dict* entryDict,
     }
     else {
       entryDict->put(KEY_STATUS, VLB_ERROR);
+    }
+  }
+  if (requested_key(keys, KEY_STATUS_HINT)) {
+    if (ds->result != error_code::REMOVED && ds->result != error_code::FINISHED) {
+      entryDict->put(KEY_STATUS_HINT, HINT_DOWNLOAD_FAIL_NOTIFY);
     }
   }
   if (requested_key(keys, KEY_FOLLOWED_BY)) {
