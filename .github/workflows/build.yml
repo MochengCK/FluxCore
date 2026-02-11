@@ -218,11 +218,68 @@ jobs:
       working-directory: ${{ env.FLUXCORE_DIR }}
       run: |
         ./src/fluxcore -v
+    - name: Collect macOS runtime libs
+      shell: bash
+      run: |
+        set -euo pipefail
+        OUT_DIR="dist/FluxCore-macos-${{ matrix.arch }}"
+        BIN_PATH="${{ env.FLUXCORE_DIR }}/src/fluxcore"
+        mkdir -p "$OUT_DIR/lib"
+        cp -v "$BIN_PATH" "$OUT_DIR/fluxcore"
+        chmod +x "$OUT_DIR/fluxcore" || true
+
+        should_bundle () {
+          local p="$1"
+          [[ "$p" == /opt/homebrew/* ]] || [[ "$p" == /usr/local/* ]]
+        }
+
+        queue=("$OUT_DIR/fluxcore")
+        idx=0
+        while [ $idx -lt ${#queue[@]} ]; do
+          f="${queue[$idx]}"
+          idx=$((idx + 1))
+          while IFS= read -r dep; do
+            [ -z "$dep" ] && continue
+            if should_bundle "$dep" && [ -f "$dep" ]; then
+              base="$(basename "$dep")"
+              dest="$OUT_DIR/lib/$base"
+              if [ ! -f "$dest" ]; then
+                cp -Lv "$dep" "$dest"
+                chmod 755 "$dest" || true
+                queue+=("$dest")
+              fi
+            fi
+          done < <(otool -L "$f" | tail -n +2 | awk '{print $1}')
+        done
+
+        # Rewrite dylib references to relative paths.
+        for f in "$OUT_DIR/fluxcore" "$OUT_DIR"/lib/*; do
+          [ -f "$f" ] || continue
+          while IFS= read -r dep; do
+            [ -z "$dep" ] && continue
+            base="$(basename "$dep")"
+            localRefExe="@executable_path/lib/$base"
+            localRefDylib="@loader_path/$base"
+            if [ -f "$OUT_DIR/lib/$base" ]; then
+              if [[ "$f" == "$OUT_DIR/fluxcore" ]]; then
+                install_name_tool -change "$dep" "$localRefExe" "$f" || true
+              else
+                install_name_tool -change "$dep" "$localRefDylib" "$f" || true
+              fi
+            fi
+          done < <(otool -L "$f" | tail -n +2 | awk '{print $1}')
+          if [[ "$f" == "$OUT_DIR"/lib/* ]]; then
+            install_name_tool -id "@loader_path/$(basename "$f")" "$f" || true
+          fi
+        done
+
+        ls -la "$OUT_DIR"
+        ls -la "$OUT_DIR/lib" || true
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
         name: FluxCore-macos-${{ matrix.arch }}
-        path: ${{ env.FLUXCORE_DIR }}/src/fluxcore
+        path: dist/FluxCore-macos-${{ matrix.arch }}
 
   build-windows:
     runs-on: windows-2022
