@@ -2,7 +2,7 @@
 # Process this file with autoconf to produce a configure script.
 #
 AC_PREREQ([2.67])
-AC_INIT([FluxCore],[1.0.2],[https://github.com/aria2/aria2/issues],[fluxcore],[https://aria2.github.io/])
+AC_INIT([FluxCore],[1.0.6],[https://github.com/aria2/aria2/issues],[fluxcore],[https://aria2.github.io/])
 
 AC_CANONICAL_HOST
 AC_CANONICAL_TARGET
@@ -1118,3 +1118,4 @@ Libaria2:       $enable_libaria2 (shared=${enable_shared} static=${enable_static
 bash_completion dir: $bashcompletiondir
 Static build:   $ARIA2_STATIC
 ])
+
