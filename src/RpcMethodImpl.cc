@@ -937,7 +937,9 @@ void gatherStatusHintForProgress(Dict* entryDict,
   }
 #endif // ENABLE_BITTORRENT
 
-  if (hint.empty() && isBt && (isWaiting || isPaused)) {
+  // "checking local data" should only be shown while waiting to auto-start
+  // seeding, not for user-paused tasks.
+  if (hint.empty() && isBt && isWaiting) {
     const auto hashCheckSeed = group->getOption()->get(PREF_BT_HASH_CHECK_SEED);
     const int64_t total = group->getTotalLength();
     const int64_t completed = group->getCompletedLength();
