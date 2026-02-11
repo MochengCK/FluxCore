@@ -36,6 +36,7 @@
 
 #include <algorithm>
 #include <sstream>
+#include <cctype>
 
 #include "RequestGroup.h"
 #include "Option.h"
@@ -368,6 +369,33 @@ void createRequestGroupForMetalink(
 #endif // ENABLE_METALINK
 
 namespace {
+bool looksLikeWindowsDrivePath(const std::string& uri)
+{
+  return uri.size() >= 3 &&
+         std::isalpha(static_cast<unsigned char>(uri[0])) &&
+         uri[1] == ':' && (uri[2] == '/' || uri[2] == '\\');
+}
+
+std::string normalizeWindowsDrivePath(const std::string& uri)
+{
+  if (!looksLikeWindowsDrivePath(uri)) {
+    return uri;
+  }
+
+  std::string path;
+  path.push_back(uri[0]);
+  path.push_back(':');
+
+  size_t i = 2;
+  while (i < uri.size() && (uri[i] == '/' || uri[i] == '\\')) {
+    ++i;
+  }
+
+  path.push_back('/');
+  path.append(uri.begin() + i, uri.end());
+  return path;
+}
+
 class AccRequestGroup {
 private:
   std::vector<std::shared_ptr<RequestGroup>>& requestGroups_;
@@ -389,6 +417,8 @@ public:
 
   void operator()(const std::string& uri)
   {
+    const auto localPath = normalizeWindowsDrivePath(uri);
+
     if (detector_.isStreamProtocol(uri)) {
       std::vector<std::string> streamURIs;
       size_t numIter = option_->getAsInt(PREF_MAX_CONNECTION_PER_SERVER);
@@ -408,13 +438,13 @@ public:
     else if (!ignoreLocalPath_ && detector_.guessTorrentFile(uri)) {
       try {
         bittorrent::ValueBaseBencodeParser parser;
-        auto torrent = parseFile(parser, uri);
+        auto torrent = parseFile(parser, localPath);
         if (!torrent) {
           throw DL_ABORT_EX2("Bencode decoding failed",
                              error_code::BENCODE_PARSE_ERROR);
         }
         requestGroups_.push_back(
-            createBtRequestGroup(uri, option_, {}, torrent.get()));
+            createBtRequestGroup(localPath, option_, {}, torrent.get()));
       }
       catch (RecoverableException& e) {
         if (throwOnError_) {
@@ -431,7 +461,7 @@ public:
 #ifdef ENABLE_METALINK
     else if (!ignoreLocalPath_ && detector_.guessMetalinkFile(uri)) {
       try {
-        Metalink2RequestGroup().generate(requestGroups_, uri, option_,
+        Metalink2RequestGroup().generate(requestGroups_, localPath, option_,
                                          option_->get(PREF_METALINK_BASE_URI));
       }
       catch (RecoverableException& e) {
