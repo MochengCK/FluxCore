@@ -46,7 +46,8 @@ jobs:
             zlib1g-dev \
             libsqlite3-dev \
             libssh2-1-dev \
-            libexpat1-dev
+            libexpat1-dev \
+            patchelf
         else
           sudo apt-get install \
             g++-12 \
@@ -64,7 +65,8 @@ jobs:
             zlib1g-dev \
             libsqlite3-dev \
             libssh2-1-dev \
-            libexpat1-dev
+            libexpat1-dev \
+            patchelf
         fi
     - name: Autoreconf
       working-directory: ${{ env.FLUXCORE_DIR }}
@@ -140,6 +142,15 @@ jobs:
               ;;
           esac
         done
+        # Make binary self-contained: prefer bundled libs under ./lib
+        patchelf --set-rpath '$ORIGIN/lib:$ORIGIN' "$OUT_DIR/fluxcore" || true
+        # Verify final bundle does not miss libs
+        ldd "$OUT_DIR/fluxcore" || true
+        if ldd "$OUT_DIR/fluxcore" | grep -q "not found"; then
+          echo "ERROR: unresolved shared libraries in bundled fluxcore"
+          ldd "$OUT_DIR/fluxcore"
+          exit 1
+        fi
         ls -la "$OUT_DIR"
         ls -la "$OUT_DIR/lib" || true
     - name: Upload artifact
