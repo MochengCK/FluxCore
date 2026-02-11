@@ -208,21 +208,41 @@ UTPexExtensionMessage::create(const unsigned char* data, size_t len)
     if (added) {
       bittorrent::extractPeer(added, AF_INET,
                               std::back_inserter(msg->freshPeers_));
+      for (auto& peer : msg->freshPeers_) {
+        if (peer) {
+          peer->setFromPEX(true);
+        }
+      }
     }
     const String* dropped = downcast<String>(dict->get("dropped"));
     if (dropped) {
       bittorrent::extractPeer(dropped, AF_INET,
                               std::back_inserter(msg->droppedPeers_));
+      for (auto& peer : msg->droppedPeers_) {
+        if (peer) {
+          peer->setFromPEX(true);
+        }
+      }
     }
     const String* added6 = downcast<String>(dict->get("added6"));
     if (added6) {
       bittorrent::extractPeer(added6, AF_INET6,
                               std::back_inserter(msg->freshPeers_));
+      for (auto& peer : msg->freshPeers_) {
+        if (peer) {
+          peer->setFromPEX(true);
+        }
+      }
     }
     const String* dropped6 = downcast<String>(dict->get("dropped6"));
     if (dropped6) {
       bittorrent::extractPeer(dropped6, AF_INET6,
                               std::back_inserter(msg->droppedPeers_));
+      for (auto& peer : msg->droppedPeers_) {
+        if (peer) {
+          peer->setFromPEX(true);
+        }
+      }
     }
   }
   return msg;

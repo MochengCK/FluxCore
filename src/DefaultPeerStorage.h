@@ -76,6 +76,8 @@ private:
 
   bool isPeerAlreadyAdded(const std::shared_ptr<Peer>& peer);
   void addUniqPeer(const std::shared_ptr<Peer>& peer);
+  void mergePeerDiscoveryFlags(const std::shared_ptr<Peer>& target,
+                               const std::shared_ptr<Peer>& source);
 
   void addDroppedPeer(const std::shared_ptr<Peer>& peer);
   std::map<std::string, uint32_t> attemptStats_;
