@@ -225,6 +225,16 @@ UTPexExtensionMessage::create(const unsigned char* data, size_t len)
                               std::back_inserter(msg->droppedPeers_));
     }
   }
+  for (auto& peer : msg->freshPeers_) {
+    if (peer) {
+      peer->setFromPEX(true);
+    }
+  }
+  for (auto& peer : msg->droppedPeers_) {
+    if (peer) {
+      peer->setFromPEX(true);
+    }
+  }
   return msg;
 }
 

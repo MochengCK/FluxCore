@@ -120,6 +120,7 @@ const char KEY_NUM_SEEDERS[] = "numSeeders";
 const char KEY_PEER_ID[] = "peerId";
 const char KEY_IP[] = "ip";
 const char KEY_PORT[] = "port";
+const char KEY_CLIENT_NAME[] = "clientName";
 const char KEY_AM_CHOKING[] = "amChoking";
 const char KEY_PEER_CHOKING[] = "peerChoking";
 const char KEY_SEEDER[] = "seeder";
@@ -156,6 +157,9 @@ const char KEY_DOWNLOAD_LENGTH[] = "downloadLength";
 const char KEY_ENCRYPTED[] = "encrypted";
 const char KEY_INCOMING[] = "incoming";
 const char KEY_LOCAL_PEER[] = "localPeer";
+const char KEY_PROTOCOL[] = "protocol";
+const char KEY_SOURCE[] = "source";
+const char KEY_ENGINE_STATUS[] = "engineStatus";
 const char KEY_EXTENDED_MESSAGING[] = "extendedMessaging";
 const char KEY_FAST_EXTENSION[] = "fastExtension";
 const char KEY_STATUS_HINT[] = "statusHint";
@@ -848,6 +852,56 @@ void gatherProgressBitTorrent(Dict* entryDict,
 } // namespace
 
 namespace {
+std::string getPeerProtocolLabel(const std::shared_ptr<Peer>& peer)
+{
+  if (!peer) {
+    return "";
+  }
+  if (peer->isExtendedMessagingEnabled() || peer->isFastExtensionEnabled()) {
+    return "tcp-ext";
+  }
+  return "tcp";
+}
+
+std::string getPeerSourceLabel(const std::shared_ptr<Peer>& peer)
+{
+  if (!peer) {
+    return "";
+  }
+  if (peer->isLocalPeer()) {
+    return "lsd";
+  }
+  if (peer->isFromDHT()) {
+    return "dht";
+  }
+  if (peer->isFromPEX()) {
+    return "pex";
+  }
+  if (peer->isIncomingPeer()) {
+    return "manual";
+  }
+  return "tracker";
+}
+
+std::string getPeerStatusLabel(const std::shared_ptr<Peer>& peer)
+{
+  if (!peer || !peer->isActive()) {
+    return "";
+  }
+  auto downloadSpeed = peer->calculateDownloadSpeed();
+  if (downloadSpeed > 0) {
+    return "downloading";
+  }
+  auto uploadSpeed = peer->calculateUploadSpeed();
+  if (uploadSpeed > 0) {
+    return "uploading";
+  }
+  if (peer->isSeeder()) {
+    return "seeding";
+  }
+  return "idle";
+}
+
 void gatherPeer(List* peers, const std::shared_ptr<PeerStorage>& ps)
 {
   auto& usedPeers = ps->getUsedPeers();
@@ -859,6 +913,9 @@ void gatherPeer(List* peers, const std::shared_ptr<PeerStorage>& ps)
     peerEntry->put(KEY_PEER_ID, util::torrentPercentEncode(peer->getPeerId(),
                                                            PEER_ID_LENGTH));
     peerEntry->put(KEY_IP, peer->getIPAddress());
+    if (!peer->getClientName().empty()) {
+      peerEntry->put(KEY_CLIENT_NAME, peer->getClientName());
+    }
     if (peer->isIncomingPeer()) {
       peerEntry->put(KEY_PORT, VLB_ZERO);
     }
@@ -895,6 +952,9 @@ void gatherPeer(List* peers, const std::shared_ptr<PeerStorage>& ps)
     peerEntry->put(KEY_EXTENDED_MESSAGING, peer->isExtendedMessagingEnabled() ? VLB_TRUE : VLB_FALSE);
     // Fast扩展协议支持
     peerEntry->put(KEY_FAST_EXTENSION, peer->isFastExtensionEnabled() ? VLB_TRUE : VLB_FALSE);
+    peerEntry->put(KEY_PROTOCOL, getPeerProtocolLabel(peer));
+    peerEntry->put(KEY_SOURCE, getPeerSourceLabel(peer));
+    peerEntry->put(KEY_ENGINE_STATUS, getPeerStatusLabel(peer));
     peers->append(std::move(peerEntry));
   }
 }
@@ -1231,6 +1291,9 @@ std::unique_ptr<ValueBase> GetPeersRpcMethod::process(const RpcRequest& req,
       peerEntry->put(KEY_PEER_ID, util::torrentPercentEncode(peer->getPeerId(),
                                                              PEER_ID_LENGTH));
       peerEntry->put(KEY_IP, peer->getIPAddress());
+      if (!peer->getClientName().empty()) {
+        peerEntry->put(KEY_CLIENT_NAME, peer->getClientName());
+      }
       peerEntry->put(KEY_PORT, util::uitos(peer->getPort()));
       // 注意：unusedPeers可能还没有分配资源，不能访问bitfield
       // 只有在资源分配后才能访问
@@ -1255,6 +1318,9 @@ std::unique_ptr<ValueBase> GetPeersRpcMethod::process(const RpcRequest& req,
           peer->getIPAddress(), peer->getOrigPort())));
       peerEntry->put("udpFails", Integer::g(defaultPeerStorage->getUdpFailCount(
           peer->getIPAddress(), peer->getOrigPort())));
+      peerEntry->put(KEY_PROTOCOL, getPeerProtocolLabel(peer));
+      peerEntry->put(KEY_SOURCE, getPeerSourceLabel(peer));
+      peerEntry->put(KEY_ENGINE_STATUS, "attempting");
       attemptingPeers->append(std::move(peerEntry));
     }
     
@@ -1265,6 +1331,9 @@ std::unique_ptr<ValueBase> GetPeersRpcMethod::process(const RpcRequest& req,
       peerEntry->put(KEY_PEER_ID, util::torrentPercentEncode(peer->getPeerId(),
                                                              PEER_ID_LENGTH));
       peerEntry->put(KEY_IP, peer->getIPAddress());
+      if (!peer->getClientName().empty()) {
+        peerEntry->put(KEY_CLIENT_NAME, peer->getClientName());
+      }
       peerEntry->put(KEY_PORT, util::uitos(peer->getPort()));
       peerEntry->put(KEY_BITFIELD, "");
       peerEntry->put(KEY_DOWNLOAD_SPEED, Integer::g(0));
@@ -1281,6 +1350,9 @@ std::unique_ptr<ValueBase> GetPeersRpcMethod::process(const RpcRequest& req,
           peer->getIPAddress(), peer->getOrigPort())));
       peerEntry->put("udpFails", Integer::g(defaultPeerStorage->getUdpFailCount(
           peer->getIPAddress(), peer->getOrigPort())));
+      peerEntry->put(KEY_PROTOCOL, getPeerProtocolLabel(peer));
+      peerEntry->put(KEY_SOURCE, getPeerSourceLabel(peer));
+      peerEntry->put(KEY_ENGINE_STATUS, "disconnected");
       disconnectedPeers->append(std::move(peerEntry));
     }
     result->put("disconnected", std::move(disconnectedPeers));
@@ -1347,6 +1419,9 @@ std::unique_ptr<ValueBase> GetPeersRpcMethod::process(const RpcRequest& req,
         auto diff = now.difference(expireTime);
         auto remainingSeconds = std::chrono::duration_cast<std::chrono::seconds>(diff).count();
         peerEntry->put("remainingTime", Integer::g(remainingSeconds));
+        peerEntry->put(KEY_PROTOCOL, "tcp");
+        peerEntry->put(KEY_SOURCE, "manual");
+        peerEntry->put(KEY_ENGINE_STATUS, "banned");
         
         bannedPeers->append(std::move(peerEntry));
         returnedCount++;
