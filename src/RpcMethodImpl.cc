@@ -857,6 +857,9 @@ std::string getPeerProtocolLabel(const std::shared_ptr<Peer>& peer)
   if (!peer) {
     return "";
   }
+  if (!peer->isActive()) {
+    return "tcp";
+  }
   if (peer->isExtendedMessagingEnabled() || peer->isFastExtensionEnabled()) {
     return "tcp-ext";
   }
