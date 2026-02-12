@@ -158,10 +158,6 @@ const char KEY_INCOMING[] = "incoming";
 const char KEY_LOCAL_PEER[] = "localPeer";
 const char KEY_EXTENDED_MESSAGING[] = "extendedMessaging";
 const char KEY_FAST_EXTENSION[] = "fastExtension";
-const char KEY_FROM_DHT[] = "fromDHT";
-const char KEY_FROM_PEX[] = "fromPEX";
-const char KEY_PROTOCOL[] = "protocol";
-const char KEY_SOURCE[] = "source";
 const char KEY_STATUS_HINT[] = "statusHint";
 const char KEY_STATUS_RIGHT_TEXT[] = "statusRightText";
 
@@ -852,56 +848,6 @@ void gatherProgressBitTorrent(Dict* entryDict,
 } // namespace
 
 namespace {
-std::string getPeerProtocolLabel(const std::shared_ptr<Peer>& peer)
-{
-  if (!peer) {
-    return "tcp";
-  }
-  if (peer->isExtendedMessagingEnabled() || peer->isFastExtensionEnabled()) {
-    return "tcp-ext";
-  }
-  return "tcp";
-}
-
-std::string getPeerSourceLabel(const std::shared_ptr<Peer>& peer)
-{
-  if (!peer) {
-    return "manual";
-  }
-  if (peer->isLocalPeer()) {
-    return "lsd";
-  }
-  if (peer->isFromDHT()) {
-    return "dht";
-  }
-  if (peer->isFromPEX()) {
-    return "pex";
-  }
-  if (!peer->isIncomingPeer()) {
-    return "tracker";
-  }
-  return "manual";
-}
-
-std::string getPeerStatusLabel(const std::shared_ptr<Peer>& peer)
-{
-  if (!peer) {
-    return "idle";
-  }
-  const auto downloadSpeed = peer->calculateDownloadSpeed();
-  if (downloadSpeed > 0) {
-    return "downloading";
-  }
-  const auto uploadSpeed = peer->calculateUploadSpeed();
-  if (uploadSpeed > 0) {
-    return "uploading";
-  }
-  if (peer->isSeeder()) {
-    return "seeding";
-  }
-  return "idle";
-}
-
 void gatherPeer(List* peers, const std::shared_ptr<PeerStorage>& ps)
 {
   auto& usedPeers = ps->getUsedPeers();
@@ -949,11 +895,6 @@ void gatherPeer(List* peers, const std::shared_ptr<PeerStorage>& ps)
     peerEntry->put(KEY_EXTENDED_MESSAGING, peer->isExtendedMessagingEnabled() ? VLB_TRUE : VLB_FALSE);
     // Fast扩展协议支持
     peerEntry->put(KEY_FAST_EXTENSION, peer->isFastExtensionEnabled() ? VLB_TRUE : VLB_FALSE);
-    peerEntry->put(KEY_FROM_DHT, peer->isFromDHT() ? VLB_TRUE : VLB_FALSE);
-    peerEntry->put(KEY_FROM_PEX, peer->isFromPEX() ? VLB_TRUE : VLB_FALSE);
-    peerEntry->put(KEY_PROTOCOL, getPeerProtocolLabel(peer));
-    peerEntry->put(KEY_SOURCE, getPeerSourceLabel(peer));
-    peerEntry->put(KEY_STATUS, getPeerStatusLabel(peer));
     peers->append(std::move(peerEntry));
   }
 }
@@ -1314,11 +1255,6 @@ std::unique_ptr<ValueBase> GetPeersRpcMethod::process(const RpcRequest& req,
           peer->getIPAddress(), peer->getOrigPort())));
       peerEntry->put("udpFails", Integer::g(defaultPeerStorage->getUdpFailCount(
           peer->getIPAddress(), peer->getOrigPort())));
-      peerEntry->put(KEY_FROM_DHT, peer->isFromDHT() ? VLB_TRUE : VLB_FALSE);
-      peerEntry->put(KEY_FROM_PEX, peer->isFromPEX() ? VLB_TRUE : VLB_FALSE);
-      peerEntry->put(KEY_PROTOCOL, getPeerProtocolLabel(peer));
-      peerEntry->put(KEY_SOURCE, getPeerSourceLabel(peer));
-      peerEntry->put("status", "attempting");
       attemptingPeers->append(std::move(peerEntry));
     }
     
@@ -1345,11 +1281,6 @@ std::unique_ptr<ValueBase> GetPeersRpcMethod::process(const RpcRequest& req,
           peer->getIPAddress(), peer->getOrigPort())));
       peerEntry->put("udpFails", Integer::g(defaultPeerStorage->getUdpFailCount(
           peer->getIPAddress(), peer->getOrigPort())));
-      peerEntry->put(KEY_FROM_DHT, peer->isFromDHT() ? VLB_TRUE : VLB_FALSE);
-      peerEntry->put(KEY_FROM_PEX, peer->isFromPEX() ? VLB_TRUE : VLB_FALSE);
-      peerEntry->put(KEY_PROTOCOL, getPeerProtocolLabel(peer));
-      peerEntry->put(KEY_SOURCE, getPeerSourceLabel(peer));
-      peerEntry->put("status", "disconnected");
       disconnectedPeers->append(std::move(peerEntry));
     }
     result->put("disconnected", std::move(disconnectedPeers));
@@ -1409,9 +1340,6 @@ std::unique_ptr<ValueBase> GetPeersRpcMethod::process(const RpcRequest& req,
         peerEntry->put(KEY_UPLOAD_SPEED, Integer::g(0));
         peerEntry->put(KEY_DOWNLOAD_LENGTH, Integer::g(0));
         peerEntry->put(KEY_CONNECTION_TIME, Integer::g(0));
-        peerEntry->put(KEY_PROTOCOL, "tcp");
-        peerEntry->put(KEY_SOURCE, "manual");
-        peerEntry->put("status", "banned");
         
         // 计算剩余封禁时间（秒）
         // difference(timer) 返回 timer.tp_ - this.tp_

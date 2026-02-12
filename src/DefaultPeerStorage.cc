@@ -130,23 +130,6 @@ void DefaultPeerStorage::addUniqPeer(const std::shared_ptr<Peer>& peer)
   uniqPeers_.insert(std::make_pair(peer->getIPAddress(), peer->getOrigPort()));
 }
 
-void DefaultPeerStorage::mergePeerDiscoveryFlags(
-    const std::shared_ptr<Peer>& target, const std::shared_ptr<Peer>& source)
-{
-  if (!target || !source) {
-    return;
-  }
-  if (source->isFromDHT()) {
-    target->setFromDHT(true);
-  }
-  if (source->isFromPEX()) {
-    target->setFromPEX(true);
-  }
-  if (source->isLocalPeer()) {
-    target->setLocalPeer(true);
-  }
-}
-
 bool DefaultPeerStorage::addPeer(const std::shared_ptr<Peer>& peer)
 {
   if (unusedPeers_.size() >= maxPeerListSize_) {
@@ -158,8 +141,6 @@ bool DefaultPeerStorage::addPeer(const std::shared_ptr<Peer>& peer)
     return false;
   }
   if (isPeerAlreadyAdded(peer)) {
-    auto existing = getPeer(peer->getIPAddress(), peer->getOrigPort());
-    mergePeerDiscoveryFlags(existing, peer);
     A2_LOG_DEBUG(fmt("Adding %s:%u is rejected because it has been already"
                      " added.",
                      peer->getIPAddress().c_str(), peer->getPort()));
@@ -187,8 +168,6 @@ void DefaultPeerStorage::addPeer(
   if (unusedPeers_.size() < maxPeerListSize_) {
     for (auto& peer : peers) {
       if (isPeerAlreadyAdded(peer)) {
-        auto existing = getPeer(peer->getIPAddress(), peer->getOrigPort());
-        mergePeerDiscoveryFlags(existing, peer);
         A2_LOG_DEBUG(fmt("Adding %s:%u is rejected because it has been already"
                          " added.",
                          peer->getIPAddress().c_str(), peer->getPort()));

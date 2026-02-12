@@ -56,9 +56,7 @@ Peer::Peer(std::string ipaddr, uint16_t port, bool incoming)
       seeder_(false),
       incoming_(incoming),
       localPeer_(false),
-      disconnectedGracefully_(false),
-      fromDHT_(false),
-      fromPEX_(false)
+      disconnectedGracefully_(false)
 {
   memset(peerId_, 0, PEER_ID_LENGTH);
 }

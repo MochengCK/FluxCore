@@ -88,10 +88,6 @@ private:
   // If true, this peer is disconnected gracefully.
   bool disconnectedGracefully_;
 
-  // Discovery source markers for UI/RPC introspection.
-  bool fromDHT_;
-  bool fromPEX_;
-
   // Before calling updateSeeder(),  make sure that
   // allocateSessionResource() is called and res_ is created.
   // Otherwise assertion fails.
@@ -273,14 +269,6 @@ public:
   bool isDisconnectedGracefully() const { return disconnectedGracefully_; }
 
   void setDisconnectedGracefully(bool f) { disconnectedGracefully_ = f; }
-
-  bool isFromDHT() const { return fromDHT_; }
-
-  void setFromDHT(bool f) { fromDHT_ = f; }
-
-  bool isFromPEX() const { return fromPEX_; }
-
-  void setFromPEX(bool f) { fromPEX_ = f; }
 
   void setBtMessageDispatcher(BtMessageDispatcher* dpt);
 

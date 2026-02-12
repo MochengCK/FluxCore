@@ -441,9 +441,7 @@ DHTMessageFactoryImpl::createGetPeersReplyMessage(
         if (addr.first.empty()) {
           continue;
         }
-        auto peer = std::make_shared<Peer>(addr.first, addr.second);
-        peer->setFromDHT(true);
-        peers.push_back(std::move(peer));
+        peers.push_back(std::make_shared<Peer>(addr.first, addr.second));
       }
     }
   }
