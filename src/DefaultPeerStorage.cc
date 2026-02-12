@@ -222,13 +222,9 @@ DefaultPeerStorage::addAndCheckoutPeer(const std::shared_ptr<Peer>& peer,
                                      p->getOrigPort() == peer->getOrigPort();
                            });
     if (it == std::end(unusedPeers_)) {
-      // peer is in usedPeers_.
-      auto existing = getPeer(peer->getIPAddress(), peer->getOrigPort());
-      mergePeerDiscoveryFlags(existing, peer);
       return nullptr;
     }
 
-    mergePeerDiscoveryFlags(peer, *it);
     unusedPeers_.erase(it);
   }
   else {
