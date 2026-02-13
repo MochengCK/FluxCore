@@ -57,7 +57,6 @@ std::vector<std::string> rpcMethodNames = {
     "aria2.getPeers",
     "aria2.banPeer",
     "aria2.unbanPeer",
-    "aria2.markPieceCompleted",
     "aria2.getBtLevel",
     "aria2.setBtStatistics",
 #endif // ENABLE_BITTORRENT
@@ -139,10 +138,6 @@ std::unique_ptr<RpcMethod> createMethod(const std::string& methodName)
 
   if (methodName == UnbanPeerRpcMethod::getMethodName()) {
     return make_unique<UnbanPeerRpcMethod>();
-  }
-
-  if (methodName == MarkPieceCompletedRpcMethod::getMethodName()) {
-    return make_unique<MarkPieceCompletedRpcMethod>();
   }
 
   if (methodName == GetBtLevelRpcMethod::getMethodName()) {
