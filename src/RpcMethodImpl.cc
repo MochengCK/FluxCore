@@ -1600,24 +1600,17 @@ MarkPieceCompletedRpcMethod::process(const RpcRequest& req, DownloadEngine* e)
     return std::move(result);
   }
 
-  const unsigned char* bitfield = pieceStorage->getBitfield();
-  if (!bitfield) {
-    result->put("status", "ignored");
-    return std::move(result);
-  }
-
-  std::vector<unsigned char> oldBitfield(bitfield, bitfield + bitfieldLength);
-  size_t byteIndex = index / 8;
-  unsigned char mask = static_cast<unsigned char>(128 >> (index % 8));
-  if ((oldBitfield[byteIndex] & mask) != 0) {
+  if (pieceStorage->hasPiece(index)) {
     result->put("status", "exists");
     return std::move(result);
   }
 
-  std::vector<unsigned char> newBitfield = oldBitfield;
-  newBitfield[byteIndex] |= mask;
-  pieceStorage->subtractPieceStats(oldBitfield.data(), bitfieldLength);
-  pieceStorage->setBitfield(newBitfield.data(), bitfieldLength);
+  auto piece = pieceStorage->getPiece(index);
+  if (!piece) {
+    result->put("status", "ignored");
+    return std::move(result);
+  }
+  pieceStorage->completePiece(piece);
 
   result->put("status", "OK");
   result->put("index", util::itos(index));
