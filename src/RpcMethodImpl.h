@@ -293,6 +293,15 @@ protected:
 public:
   static const char* getMethodName() { return "aria2.unbanPeer"; }
 };
+
+class MarkPieceCompletedRpcMethod : public RpcMethod {
+protected:
+  virtual std::unique_ptr<ValueBase> process(const RpcRequest& req,
+                                             DownloadEngine* e) CXX11_OVERRIDE;
+
+public:
+  static const char* getMethodName() { return "aria2.markPieceCompleted"; }
+};
 #endif // ENABLE_BITTORRENT
 
 class GetServersRpcMethod : public RpcMethod {

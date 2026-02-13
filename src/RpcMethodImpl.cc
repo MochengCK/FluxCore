@@ -1572,6 +1572,57 @@ std::unique_ptr<ValueBase> UnbanPeerRpcMethod::process(const RpcRequest& req,
   result->put("ip", ip);
   return std::move(result);
 }
+
+std::unique_ptr<ValueBase>
+MarkPieceCompletedRpcMethod::process(const RpcRequest& req, DownloadEngine* e)
+{
+  const String* gidParam = checkRequiredParam<String>(req, 0);
+  const Integer* indexParam = checkRequiredInteger(req, 1, IntegerGE(0));
+
+  a2_gid_t gid = str2Gid(gidParam);
+  auto group = e->getRequestGroupMan()->findGroup(gid);
+  if (!group) {
+    throw DL_ABORT_EX(fmt("No such download for GID#%s",
+                          GroupId::toHex(gid).c_str()));
+  }
+
+  auto pieceStorage = group->getPieceStorage();
+  auto result = Dict::g();
+  if (!pieceStorage) {
+    result->put("status", "ignored");
+    return std::move(result);
+  }
+
+  size_t index = static_cast<size_t>(indexParam->i());
+  size_t bitfieldLength = pieceStorage->getBitfieldLength();
+  if (bitfieldLength == 0 || index >= bitfieldLength * 8) {
+    result->put("status", "ignored");
+    return std::move(result);
+  }
+
+  const unsigned char* bitfield = pieceStorage->getBitfield();
+  if (!bitfield) {
+    result->put("status", "ignored");
+    return std::move(result);
+  }
+
+  std::vector<unsigned char> oldBitfield(bitfield, bitfield + bitfieldLength);
+  size_t byteIndex = index / 8;
+  unsigned char mask = static_cast<unsigned char>(128 >> (index % 8));
+  if ((oldBitfield[byteIndex] & mask) != 0) {
+    result->put("status", "exists");
+    return std::move(result);
+  }
+
+  std::vector<unsigned char> newBitfield = oldBitfield;
+  newBitfield[byteIndex] |= mask;
+  pieceStorage->subtractPieceStats(oldBitfield.data(), bitfieldLength);
+  pieceStorage->setBitfield(newBitfield.data(), bitfieldLength);
+
+  result->put("status", "OK");
+  result->put("index", util::itos(index));
+  return std::move(result);
+}
 #endif // ENABLE_BITTORRENT
 
 std::unique_ptr<ValueBase> TellStatusRpcMethod::process(const RpcRequest& req,
