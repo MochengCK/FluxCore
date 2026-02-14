@@ -477,9 +477,11 @@ SRCS += \
 	BtRequestFactory.h\
 	BtRequestMessage.cc BtRequestMessage.h\
 	BtRuntime.cc BtRuntime.h\
+	BtStatisticsManager.cc BtStatisticsManager.h\
 	BtSeederStateChoke.cc BtSeederStateChoke.h\
 	BtSetup.cc BtSetup.h\
 	BtStopDownloadCommand.cc BtStopDownloadCommand.h\
+	BtXpCalculator.cc BtXpCalculator.h\
 	BtSuggestPieceMessage.cc BtSuggestPieceMessage.h\
 	BtUnchokeMessage.cc BtUnchokeMessage.h\
 	DefaultBtAnnounce.cc DefaultBtAnnounce.h\
