@@ -67,6 +67,7 @@ class EventPoll;
 class Command;
 #ifdef ENABLE_BITTORRENT
 class BtRegistry;
+class BtStatisticsManager;
 #endif // ENABLE_BITTORRENT
 #ifdef ENABLE_WEBSOCKET
 namespace rpc {
@@ -133,6 +134,7 @@ private:
 
 #ifdef ENABLE_BITTORRENT
   std::unique_ptr<BtRegistry> btRegistry_;
+  std::unique_ptr<BtStatisticsManager> btStatisticsManager_;
 #endif // ENABLE_BITTORRENT
 
   CUIDCounter cuidCounter_;
@@ -227,7 +229,7 @@ public:
 
   Option* getOption() const { return option_; }
 
-  void setOption(Option* op) { option_ = op; }
+  void setOption(Option* op);
 
   void setStatCalc(std::unique_ptr<StatCalc> statCalc);
 
@@ -291,6 +293,11 @@ public:
   const std::unique_ptr<BtRegistry>& getBtRegistry() const
   {
     return btRegistry_;
+  }
+
+  BtStatisticsManager* getBtStatisticsManager() const
+  {
+    return btStatisticsManager_.get();
   }
 #endif // ENABLE_BITTORRENT
 

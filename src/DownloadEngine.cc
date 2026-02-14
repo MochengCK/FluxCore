@@ -68,6 +68,11 @@
 #include "fmt.h"
 #include "wallclock.h"
 #ifdef ENABLE_BITTORRENT
+#  include "BtStatisticsManager.h"
+#endif // ENABLE_BITTORRENT
+#include "File.h"
+#include "prefs.h"
+#ifdef ENABLE_BITTORRENT
 #  include "BtRegistry.h"
 #endif // ENABLE_BITTORRENT
 #ifdef ENABLE_WEBSOCKET
@@ -239,6 +244,11 @@ void DownloadEngine::onEndOfRun()
   requestGroupMan_->removeStoppedGroup(this);
   requestGroupMan_->closeFile();
   requestGroupMan_->save();
+#ifdef ENABLE_BITTORRENT
+  if (btStatisticsManager_) {
+    btStatisticsManager_->save();
+  }
+#endif // ENABLE_BITTORRENT
 }
 
 void DownloadEngine::afterEachIteration()
@@ -278,6 +288,35 @@ void DownloadEngine::requestForceHalt()
 void DownloadEngine::setStatCalc(std::unique_ptr<StatCalc> statCalc)
 {
   statCalc_ = std::move(statCalc);
+}
+
+void DownloadEngine::setOption(Option* op)
+{
+  option_ = op;
+#ifdef ENABLE_BITTORRENT
+  if (!option_ || btStatisticsManager_) {
+    return;
+  }
+
+  std::string sessionDir = option_->get(PREF_DIR);
+  if (option_->defined(PREF_SAVE_SESSION)) {
+    std::string sessionFile = option_->get(PREF_SAVE_SESSION);
+    size_t pos = sessionFile.find_last_of("/\\");
+    if (pos != std::string::npos) {
+      sessionDir = sessionFile.substr(0, pos);
+    }
+  }
+
+  std::string configDir = util::applyDir(sessionDir, ".aria2");
+  File dir(configDir);
+  if (!dir.exists()) {
+    dir.mkdirs();
+  }
+
+  std::string statsPath = util::applyDir(configDir, "bt-stats.dat");
+  btStatisticsManager_ = make_unique<BtStatisticsManager>(statsPath);
+  btStatisticsManager_->load();
+#endif // ENABLE_BITTORRENT
 }
 
 #ifdef ENABLE_ASYNC_DNS

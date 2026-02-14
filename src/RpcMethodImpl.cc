@@ -38,6 +38,7 @@
 #include <algorithm>
 #include <cctype>
 #include <sstream>
+#include <limits>
 
 #include "Logger.h"
 #include "LogFactory.h"
@@ -73,6 +74,8 @@
 #ifdef ENABLE_BITTORRENT
 #  include "bittorrent_helper.h"
 #  include "BtRegistry.h"
+#  include "BtStatisticsManager.h"
+#  include "BtXpCalculator.h"
 #  include "PeerStorage.h"
 #  include "DefaultPeerStorage.h"
 #  include "Peer.h"
@@ -2278,24 +2281,44 @@ namespace rpc {
 std::unique_ptr<ValueBase>
 GetBtLevelRpcMethod::process(const RpcRequest& req, DownloadEngine* e)
 {
-  // TODO: Get BtStatisticsManager from DownloadEngine
-  // For now, return a placeholder response
+  auto statsManager = e->getBtStatisticsManager();
+  if (!statsManager) {
+    auto result = Dict::g();
+    result->put("level", Integer::g(1));
+    result->put("totalXP", util::itos(0));
+    result->put("downloadXP", util::itos(0));
+    result->put("uploadXP", util::itos(0));
+    result->put("ratioXP", util::itos(0));
+    result->put("peerXP", util::itos(0));
+    result->put("timeXP", util::itos(0));
+    result->put("downloadBytes", String::g("0"));
+    result->put("uploadBytes", String::g("0"));
+    result->put("seedTimeSeconds", String::g("0"));
+    result->put("maxPeers", Integer::g(0));
+    result->put("shareRatio", util::itos(0));
+    result->put("currentLevelThreshold", Integer::g(0));
+    result->put("nextLevelThreshold", Integer::g(300));
+    result->put("xpToNextLevel", Integer::g(300));
+    return std::move(result);
+  }
+
+  auto levelInfo = BtXpCalculator::calculateLevel(*statsManager);
   auto result = Dict::g();
-  result->put("level", Integer::g(1));
-  result->put("totalXP", util::itos(0));
-  result->put("downloadXP", util::itos(0));
-  result->put("uploadXP", util::itos(0));
-  result->put("ratioXP", util::itos(0));
-  result->put("peerXP", util::itos(0));
-  result->put("timeXP", util::itos(0));
-  result->put("downloadBytes", String::g("0"));
-  result->put("uploadBytes", String::g("0"));
-  result->put("seedTimeSeconds", String::g("0"));
-  result->put("maxPeers", Integer::g(0));
-  result->put("shareRatio", util::itos(0));
-  result->put("currentLevelThreshold", Integer::g(0));
-  result->put("nextLevelThreshold", Integer::g(300));
-  result->put("xpToNextLevel", Integer::g(300));
+  result->put("level", Integer::g(levelInfo.level));
+  result->put("totalXP", fmt("%.2f", levelInfo.xp.totalXP));
+  result->put("downloadXP", fmt("%.2f", levelInfo.xp.downloadXP));
+  result->put("uploadXP", fmt("%.2f", levelInfo.xp.uploadXP));
+  result->put("ratioXP", fmt("%.2f", levelInfo.xp.ratioXP));
+  result->put("peerXP", fmt("%.2f", levelInfo.xp.peerXP));
+  result->put("timeXP", fmt("%.2f", levelInfo.xp.timeXP));
+  result->put("downloadBytes", String::g(util::uitos(levelInfo.downloadBytes)));
+  result->put("uploadBytes", String::g(util::uitos(levelInfo.uploadBytes)));
+  result->put("seedTimeSeconds", String::g(util::uitos(levelInfo.seedTimeSeconds)));
+  result->put("maxPeers", Integer::g(levelInfo.maxPeers));
+  result->put("shareRatio", fmt("%.4f", levelInfo.shareRatio));
+  result->put("currentLevelThreshold", Integer::g(levelInfo.currentLevelThreshold));
+  result->put("nextLevelThreshold", Integer::g(levelInfo.nextLevelThreshold));
+  result->put("xpToNextLevel", Integer::g(levelInfo.xpToNextLevel));
   
   return std::move(result);
 }
@@ -2303,8 +2326,73 @@ GetBtLevelRpcMethod::process(const RpcRequest& req, DownloadEngine* e)
 std::unique_ptr<ValueBase>
 SetBtStatisticsRpcMethod::process(const RpcRequest& req, DownloadEngine* e)
 {
-  // TODO: Get BtStatisticsManager from DownloadEngine and set statistics
-  // For now, return success
+  auto statsManager = e->getBtStatisticsManager();
+  if (!statsManager) {
+    throw DL_ABORT_EX("BT statistics manager not initialized.");
+  }
+
+  const Dict* statsParam = checkRequiredParam<Dict>(req, 0);
+  const ValueBase* dlVal = statsParam->get("downloadBytes");
+  const ValueBase* ulVal = statsParam->get("uploadBytes");
+  const ValueBase* seedVal = statsParam->get("seedTimeSeconds");
+  const ValueBase* peersVal = statsParam->get("maxPeers");
+
+  auto toUint64 = [](const ValueBase* value) -> uint64_t {
+    if (!value) {
+      return 0;
+    }
+    if (auto s = downcast<String>(value)) {
+      try {
+        unsigned long long v = std::stoull(s->s());
+        return static_cast<uint64_t>(v);
+      } catch (...) {
+        return 0;
+      }
+    }
+    if (auto i = downcast<Integer>(value)) {
+      if (i->i() < 0) {
+        return 0;
+      }
+      return static_cast<uint64_t>(i->i());
+    }
+    return 0;
+  };
+
+  auto toUint32 = [](const ValueBase* value) -> uint32_t {
+    if (!value) {
+      return 0;
+    }
+    if (auto s = downcast<String>(value)) {
+      try {
+        unsigned long long v = std::stoull(s->s());
+        if (v > static_cast<unsigned long long>(std::numeric_limits<uint32_t>::max())) {
+          v = std::numeric_limits<uint32_t>::max();
+        }
+        return static_cast<uint32_t>(v);
+      } catch (...) {
+        return 0;
+      }
+    }
+    if (auto i = downcast<Integer>(value)) {
+      if (i->i() < 0) {
+        return 0;
+      }
+      if (i->i() > static_cast<int64_t>(std::numeric_limits<uint32_t>::max())) {
+        return std::numeric_limits<uint32_t>::max();
+      }
+      return static_cast<uint32_t>(i->i());
+    }
+    return 0;
+  };
+
+  uint64_t downloadBytes = toUint64(dlVal);
+  uint64_t uploadBytes = toUint64(ulVal);
+  uint64_t seedTimeSeconds = toUint64(seedVal);
+  uint32_t maxPeers = toUint32(peersVal);
+
+  statsManager->setStatistics(downloadBytes, uploadBytes, seedTimeSeconds, maxPeers);
+  statsManager->save();
+
   auto result = Dict::g();
   result->put("success", VLB_TRUE);
   
