@@ -176,6 +176,12 @@ const char HINT_DOWNLOAD_FAIL_NOTIFY[] = "task.download-fail-notify";
 const char HINT_STATUS_PAUSED[] = "task.status-paused";
 const char HINT_STATUS_PAUSED_SEEDING[] = "task.status-paused-seeding";
 const char HINT_STATUS_MAGNET_DOWNLOADING[] = "task.status-magnet-downloading";
+const char HINT_STATUS_ACTIVE[] = "task.status-active";
+const char HINT_STATUS_WAITING[] = "task.status-waiting";
+const char HINT_STATUS_SEEDING[] = "task.status-seeding";
+const char HINT_STATUS_COMPLETE[] = "task.status-complete";
+const char HINT_STATUS_ERROR[] = "task.status-error";
+const char HINT_STATUS_REMOVED[] = "task.status-removed";
 const char TYPE_BT[] = "bt";
 const char TYPE_MAGNET[] = "magnet";
 const char TYPE_HTTP[] = "http";
@@ -1041,6 +1047,48 @@ void gatherStatusHintForProgress(Dict* entryDict,
 } // namespace
 
 namespace {
+void gatherEngineStatusForProgress(Dict* entryDict,
+                                   const std::shared_ptr<RequestGroup>& group,
+                                   const std::vector<std::string>& keys)
+{
+  if (!group || !requested_key(keys, KEY_ENGINE_STATUS)) {
+    return;
+  }
+
+  const bool isActive = group->getState() == RequestGroup::STATE_ACTIVE;
+  const bool isPaused = !isActive && group->isPauseRequested();
+  const auto& dctx = group->getDownloadContext();
+  const bool isBt = dctx && dctx->hasAttribute(CTX_ATTR_BT);
+
+  std::string status;
+  if (isActive) {
+    if (isBt && group->isSeeder()) {
+      status = HINT_STATUS_SEEDING;
+    }
+#ifdef ENABLE_BITTORRENT
+    else if (isBt && !isMetadataReady(group)) {
+      status = HINT_STATUS_MAGNET_DOWNLOADING;
+    }
+#endif // ENABLE_BITTORRENT
+    else {
+      status = HINT_STATUS_ACTIVE;
+    }
+  }
+  else if (isPaused) {
+    status = (isBt && group->isSeeder()) ? HINT_STATUS_PAUSED_SEEDING
+                                         : HINT_STATUS_PAUSED;
+  }
+  else {
+    status = HINT_STATUS_WAITING;
+  }
+
+  if (!status.empty()) {
+    entryDict->put(KEY_ENGINE_STATUS, status);
+  }
+}
+} // namespace
+
+namespace {
 void gatherProgress(Dict* entryDict, const std::shared_ptr<RequestGroup>& group,
                     DownloadEngine* e, const std::vector<std::string>& keys)
 {
@@ -1071,6 +1119,7 @@ void gatherProgress(Dict* entryDict, const std::shared_ptr<RequestGroup>& group,
     }
   }
   gatherStatusHintForProgress(entryDict, group, keys);
+  gatherEngineStatusForProgress(entryDict, group, keys);
 }
 } // namespace
 
@@ -1096,6 +1145,17 @@ void gatherStoppedDownload(Dict* entryDict,
     }
     else {
       entryDict->put(KEY_STATUS, VLB_ERROR);
+    }
+  }
+  if (requested_key(keys, KEY_ENGINE_STATUS)) {
+    if (ds->result == error_code::REMOVED) {
+      entryDict->put(KEY_ENGINE_STATUS, HINT_STATUS_REMOVED);
+    }
+    else if (ds->result == error_code::FINISHED) {
+      entryDict->put(KEY_ENGINE_STATUS, HINT_STATUS_COMPLETE);
+    }
+    else {
+      entryDict->put(KEY_ENGINE_STATUS, HINT_STATUS_ERROR);
     }
   }
   if (requested_key(keys, KEY_STATUS_HINT)) {
