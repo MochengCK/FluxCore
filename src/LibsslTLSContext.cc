@@ -197,7 +197,7 @@ OpenSSLTLSContext::OpenSSLTLSContext(TLSSessionSide side, TLSVersion minVer)
   // 设置默认读缓冲区大小以提高性能（OpenSSL 1.1.1+）
   // 16KB 是一个平衡性能和内存的好选择
 #if OPENSSL_VERSION_NUMBER >= 0x10101000L
-  SSL_CTX_set_default_read_buffer_size(sslCtx_, 16384);
+  SSL_CTX_set_default_read_buffer_len(sslCtx_, 16384);
 #endif
 
   if (SSL_CTX_set_cipher_list(sslCtx_, "HIGH:!aNULL:!eNULL") == 0) {
