@@ -126,15 +126,16 @@ AsyncNameResolver::AsyncNameResolver(int family, const std::string& servers)
     : status_(STATUS_READY), family_(family), channel_(nullptr)
 {
   // c-ares 1.34.6+ uses ares_channel_t* instead of ares_channel
-  // Initialize with new API
-  int status = ares_init(&channel_);
+  // Use ares_init_options() to set socket state callback
+  ares_options opts{};
+  opts.sock_state_cb = sock_state_cb;
+  opts.sock_state_cb_data = this;
+  
+  int status = ares_init_options(&channel_, &opts, ARES_OPT_SOCK_STATE_CB);
   if (status != ARES_SUCCESS) {
-    A2_LOG_ERROR(fmt("ares_init failed: %s", ares_strerror(status)));
+    A2_LOG_ERROR(fmt("ares_init_options failed: %s", ares_strerror(status)));
     return;
   }
-
-  // Set socket state callback
-  ares_set_socket_callback(channel_, sock_state_cb, this);
 
   // Set DNS servers if provided
   if (!servers.empty()) {
