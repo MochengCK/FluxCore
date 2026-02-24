@@ -67,7 +67,7 @@ private:
   std::vector<AsyncNameResolverSocketEntry> socks_;
   STATUS status_;
   int family_;
-  ares_channel channel_;
+  ares_channel_t* channel_;
 
   std::vector<std::string> resolvedAddresses_;
   std::string error_;

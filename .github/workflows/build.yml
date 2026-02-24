@@ -42,12 +42,13 @@ jobs:
             libtool \
             pkgconf \
             libssl-dev \
-            libc-ares-dev \
             zlib1g-dev \
             libsqlite3-dev \
             libssh2-1-dev \
             libexpat1-dev \
-            patchelf
+            patchelf \
+            cmake \
+            wget
         else
           sudo apt-get install \
             g++-12 \
@@ -61,13 +62,42 @@ jobs:
             libtool \
             pkg-config \
             libssl-dev \
-            libc-ares-dev \
             zlib1g-dev \
             libsqlite3-dev \
             libssh2-1-dev \
             libexpat1-dev \
-            patchelf
+            patchelf \
+            cmake \
+            wget
         fi
+    - name: Install c-ares 1.34.6
+      run: |
+        # Check if system c-ares is sufficient
+        if pkg-config --exists libcares && pkg-config --atleast-version=1.34.0 libcares; then
+          echo "System c-ares version is sufficient"
+          pkg-config --modversion libcares
+        else
+          echo "Building c-ares 1.34.6 from source"
+          wget https://github.com/c-ares/c-ares/releases/download/v1.34.6/c-ares-1.34.6.tar.gz
+          tar xzf c-ares-1.34.6.tar.gz
+          cd c-ares-1.34.6
+          mkdir build && cd build
+          cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/usr/local \
+            -DCARES_STATIC=ON \
+            -DCARES_SHARED=ON \
+            -DCARES_BUILD_TESTS=OFF
+          make -j$(nproc)
+          sudo make install
+          sudo ldconfig
+          cd ../..
+          rm -rf c-ares-1.34.6 c-ares-1.34.6.tar.gz
+        fi
+        # Verify installation
+        pkg-config --modversion libcares
+        pkg-config --cflags libcares
+        pkg-config --libs libcares
     - name: Autoreconf
       working-directory: ${{ env.FLUXCORE_DIR }}
       run: |
@@ -186,11 +216,38 @@ jobs:
         fi
     - name: MacOS setup
       run: |
-        brew install gettext openssl libssh2 c-ares sqlite3 \
-          autoconf automake pkg-config libtool expat
+        brew install gettext openssl libssh2 sqlite3 \
+          autoconf automake pkg-config libtool expat cmake wget
     - name: MacOS gettext path
       run: |
         echo "$(brew --prefix gettext)/bin" >> $GITHUB_PATH
+    - name: Install c-ares 1.34.6
+      run: |
+        # Check if Homebrew c-ares is sufficient
+        if pkg-config --exists libcares && pkg-config --atleast-version=1.34.0 libcares; then
+          echo "Homebrew c-ares version is sufficient"
+          pkg-config --modversion libcares
+        else
+          echo "Building c-ares 1.34.6 from source"
+          wget https://github.com/c-ares/c-ares/releases/download/v1.34.6/c-ares-1.34.6.tar.gz
+          tar xzf c-ares-1.34.6.tar.gz
+          cd c-ares-1.34.6
+          mkdir build && cd build
+          cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/usr/local \
+            -DCARES_STATIC=ON \
+            -DCARES_SHARED=ON \
+            -DCARES_BUILD_TESTS=OFF
+          make -j$(sysctl -n hw.ncpu)
+          sudo make install
+          cd ../..
+          rm -rf c-ares-1.34.6 c-ares-1.34.6.tar.gz
+        fi
+        # Verify installation
+        pkg-config --modversion libcares
+        pkg-config --cflags libcares
+        pkg-config --libs libcares
     - name: Autoreconf
       working-directory: ${{ env.FLUXCORE_DIR }}
       run: |
@@ -314,11 +371,12 @@ jobs:
               xz
               mingw-w64-x86_64-openssl
               mingw-w64-x86_64-libssh2
-              mingw-w64-x86_64-c-ares
               mingw-w64-x86_64-sqlite3
               mingw-w64-x86_64-expat
               mingw-w64-x86_64-gmp
               mingw-w64-x86_64-zlib
+              mingw-w64-x86_64-cmake
+              wget
     steps:
     - uses: actions/checkout@v6
     - uses: msys2/setup-msys2@v2
@@ -338,6 +396,35 @@ jobs:
         else
           exit 1
         fi
+    - name: Install c-ares 1.34.6
+      shell: msys2 {0}
+      run: |
+        # Check if MSYS2 c-ares is sufficient
+        if pkg-config --exists libcares && pkg-config --atleast-version=1.34.0 libcares; then
+          echo "MSYS2 c-ares version is sufficient"
+          pkg-config --modversion libcares
+        else
+          echo "Building c-ares 1.34.6 from source"
+          wget https://github.com/c-ares/c-ares/releases/download/v1.34.6/c-ares-1.34.6.tar.gz
+          tar xzf c-ares-1.34.6.tar.gz
+          cd c-ares-1.34.6
+          mkdir build && cd build
+          cmake .. \
+            -G "MSYS Makefiles" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/${{ matrix.mingw_dir }} \
+            -DCARES_STATIC=ON \
+            -DCARES_SHARED=ON \
+            -DCARES_BUILD_TESTS=OFF
+          make -j$(nproc)
+          make install
+          cd ../..
+          rm -rf c-ares-1.34.6 c-ares-1.34.6.tar.gz
+        fi
+        # Verify installation
+        pkg-config --modversion libcares
+        pkg-config --cflags libcares
+        pkg-config --libs libcares
     - name: Autoreconf
       shell: msys2 {0}
       working-directory: ${{ env.FLUXCORE_DIR }}

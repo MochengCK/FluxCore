@@ -50,8 +50,18 @@ void callback(void* arg, int status, int timeouts, ares_addrinfo* result)
   if (status != ARES_SUCCESS) {
     resolverPtr->error_ = ares_strerror(status);
     resolverPtr->status_ = AsyncNameResolver::STATUS_ERROR;
+    A2_LOG_DEBUG(fmt("DNS resolution failed: %s (timeouts: %d)", 
+                     ares_strerror(status), timeouts));
     return;
   }
+  
+  if (!result) {
+    resolverPtr->error_ = "no result returned from DNS query";
+    resolverPtr->status_ = AsyncNameResolver::STATUS_ERROR;
+    A2_LOG_DEBUG("DNS resolution failed: no result returned");
+    return;
+  }
+  
   for (auto ap = result->nodes; ap; ap = ap->ai_next) {
     char addrstring[NI_MAXHOST];
     auto rv = getnameinfo(ap->ai_addr, ap->ai_addrlen, addrstring,
@@ -113,23 +123,35 @@ void AsyncNameResolver::handle_sock_state(ares_socket_t fd, int read, int write)
 }
 
 AsyncNameResolver::AsyncNameResolver(int family, const std::string& servers)
-    : status_(STATUS_READY), family_(family)
+    : status_(STATUS_READY), family_(family), channel_(nullptr)
 {
-  ares_options opts{};
-  opts.sock_state_cb = sock_state_cb;
-  opts.sock_state_cb_data = this;
+  // c-ares 1.34.6+ uses ares_channel_t* instead of ares_channel
+  // Initialize with new API
+  int status = ares_init(&channel_);
+  if (status != ARES_SUCCESS) {
+    A2_LOG_ERROR(fmt("ares_init failed: %s", ares_strerror(status)));
+    return;
+  }
 
-  // TODO evaluate return value
-  ares_init_options(&channel_, &opts, ARES_OPT_SOCK_STATE_CB);
+  // Set socket state callback
+  ares_set_socket_callback(channel_, sock_state_cb, this);
 
+  // Set DNS servers if provided
   if (!servers.empty()) {
-    if (ares_set_servers_csv(channel_, servers.c_str()) != ARES_SUCCESS) {
-      A2_LOG_DEBUG("ares_set_servers_csv failed");
+    status = ares_set_servers_csv(channel_, servers.c_str());
+    if (status != ARES_SUCCESS) {
+      A2_LOG_DEBUG(fmt("ares_set_servers_csv failed: %s", ares_strerror(status)));
     }
   }
 }
 
-AsyncNameResolver::~AsyncNameResolver() { ares_destroy(channel_); }
+AsyncNameResolver::~AsyncNameResolver() 
+{ 
+  if (channel_) {
+    ares_destroy(channel_);
+    channel_ = nullptr;
+  }
+}
 
 void AsyncNameResolver::resolve(const std::string& name)
 {

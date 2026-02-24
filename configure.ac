@@ -504,10 +504,17 @@ fi
 
 have_libcares=no
 if test "x$with_libcares" = "xyes"; then
-  PKG_CHECK_MODULES([LIBCARES], [libcares >= 1.16.0], [have_libcares=yes],
+  PKG_CHECK_MODULES([LIBCARES], [libcares >= 1.34.0], [have_libcares=yes],
                     [have_libcares=no])
   if test "x$have_libcares" = "xyes"; then
     AC_DEFINE([HAVE_LIBCARES], [1], [Define to 1 if you have libcares.])
+    
+    # c-ares 1.34.0+ uses ares_channel_t* instead of ares_channel
+    # and has new API for initialization
+    AC_DEFINE([CARES_HAVE_ARES_LIBRARY_INIT], [1], 
+              [Define to 1 if ares_library_init is available.])
+    AC_DEFINE([CARES_HAVE_ARES_LIBRARY_CLEANUP], [1], 
+              [Define to 1 if ares_library_cleanup is available.])
 
     # -DCARES_STATICLIB is appended by pkg-config file libcares.pc
   else

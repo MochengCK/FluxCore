@@ -160,13 +160,15 @@ bool Platform::setUp()
   }
 #endif // HAVE_LIBGNUTLS
 
-#ifdef CARES_HAVE_ARES_LIBRARY_INIT
+#ifdef ENABLE_ASYNC_DNS
+  // ares_library_init is available since c-ares 1.7.0
+  // In c-ares 1.19.0+, this is always available and required
   int aresErrorCode;
   if ((aresErrorCode = ares_library_init(ARES_LIB_INIT_ALL)) != 0) {
     global::cerr()->printf("ares_library_init() failed:%s\n",
                            ares_strerror(aresErrorCode));
   }
-#endif // CARES_HAVE_ARES_LIBRARY_INIT
+#endif // ENABLE_ASYNC_DNS
 
 #ifdef HAVE_LIBSSH2
   {
@@ -220,9 +222,11 @@ bool Platform::tearDown()
   gnutls_global_deinit();
 #endif // HAVE_LIBGNUTLS
 
-#ifdef CARES_HAVE_ARES_LIBRARY_CLEANUP
+#ifdef ENABLE_ASYNC_DNS
+  // ares_library_cleanup is available since c-ares 1.7.0
+  // In c-ares 1.19.0+, this is always available and should be called
   ares_library_cleanup();
-#endif // CARES_HAVE_ARES_LIBRARY_CLEANUP
+#endif // ENABLE_ASYNC_DNS
 
 #ifdef HAVE_LIBSSH2
   libssh2_exit();
