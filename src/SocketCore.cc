@@ -179,14 +179,28 @@ namespace {
 void applySocketBufferSize(sock_t fd)
 {
   auto recvBufSize = SocketCore::getSocketRecvBufferSize();
+  
+  // 如果未配置，使用默认值 256KB（适合高速网络）
+  // 这对于 HTTPS 下载特别重要，可以减少 TLS 层的开销
   if (recvBufSize == 0) {
-    return;
+    recvBufSize = 256 * 1024;  // 256KB
   }
 
+  // 设置接收缓冲区
   if (setsockopt(fd, SOL_SOCKET, SO_RCVBUF, (a2_sockopt_t)&recvBufSize,
                  sizeof(recvBufSize)) < 0) {
     auto errNum = SOCKET_ERRNO;
-    A2_LOG_WARN(fmt("Failed to set socket buffer size. Cause: %s",
+    A2_LOG_WARN(fmt("Failed to set socket receive buffer size. Cause: %s",
+                    errorMsg(errNum).c_str()));
+  }
+  
+  // 设置发送缓冲区（同样大小）
+  // 这可以提高上传和双向传输的性能
+  int sendBufSize = recvBufSize;
+  if (setsockopt(fd, SOL_SOCKET, SO_SNDBUF, (a2_sockopt_t)&sendBufSize,
+                 sizeof(sendBufSize)) < 0) {
+    auto errNum = SOCKET_ERRNO;
+    A2_LOG_WARN(fmt("Failed to set socket send buffer size. Cause: %s",
                     errorMsg(errNum).c_str()));
   }
 }

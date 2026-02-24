@@ -181,12 +181,25 @@ OpenSSLTLSContext::OpenSSLTLSContext(TLSSessionSide side, TLSVersion minVer)
                                    | SSL_OP_NO_COMPRESSION
 #endif // SSL_OP_NO_COMPRESSION
   );
+  
+  // 性能优化：启用多种 SSL 模式以提高 HTTPS 下载性能
   SSL_CTX_set_mode(sslCtx_, SSL_MODE_AUTO_RETRY);
   SSL_CTX_set_mode(sslCtx_, SSL_MODE_ENABLE_PARTIAL_WRITE);
+  
+  // 允许移动写缓冲区，提高写入灵活性
+  SSL_CTX_set_mode(sslCtx_, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
+  
 #ifdef SSL_MODE_RELEASE_BUFFERS
   /* keep memory usage low */
   SSL_CTX_set_mode(sslCtx_, SSL_MODE_RELEASE_BUFFERS);
 #endif
+
+  // 设置默认读缓冲区大小以提高性能（OpenSSL 1.1.1+）
+  // 16KB 是一个平衡性能和内存的好选择
+#if OPENSSL_VERSION_NUMBER >= 0x10101000L
+  SSL_CTX_set_default_read_buffer_size(sslCtx_, 16384);
+#endif
+
   if (SSL_CTX_set_cipher_list(sslCtx_, "HIGH:!aNULL:!eNULL") == 0) {
     good_ = false;
     A2_LOG_ERROR(fmt("SSL_CTX_set_cipher_list() failed. Cause: %s",
