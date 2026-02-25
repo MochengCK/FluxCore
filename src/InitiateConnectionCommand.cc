@@ -76,20 +76,33 @@ bool InitiateConnectionCommand::executeInternal()
   std::string hostname;
   uint16_t port;
   std::shared_ptr<Request> proxyRequest = createProxyRequest();
+  
   if (!proxyRequest) {
+    // No proxy: resolve target hostname and connect directly
     hostname = getRequest()->getHost();
     port = getRequest()->getPort();
+    
+    A2_LOG_INFO(fmt("CUID#%" PRId64 " - No proxy, resolving target %s:%u",
+                    getCuid(), hostname.c_str(), port));
   }
   else {
+    // Using proxy: only resolve proxy hostname, NOT target hostname
+    // The proxy will resolve the target hostname itself
     hostname = proxyRequest->getHost();
     port = proxyRequest->getPort();
+    
+    A2_LOG_INFO(fmt("CUID#%" PRId64 " - Using proxy %s:%u for target %s:%u",
+                    getCuid(), hostname.c_str(), port,
+                    getRequest()->getHost().c_str(), getRequest()->getPort()));
   }
+  
   std::vector<std::string> addrs;
   std::string ipaddr = resolveHostname(addrs, hostname, port);
   if (ipaddr.empty()) {
     addCommandSelf();
     return false;
   }
+  
   try {
     auto c = createNextCommand(hostname, ipaddr, port, addrs, proxyRequest);
     c->setStatus(Command::STATUS_ONESHOT_REALTIME);
