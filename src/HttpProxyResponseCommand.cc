@@ -57,9 +57,15 @@ HttpProxyResponseCommand::~HttpProxyResponseCommand() = default;
 
 std::unique_ptr<Command> HttpProxyResponseCommand::getNextCommand()
 {
+  // After CONNECT tunnel is established and TLS handshake is complete,
+  // create a NEW HttpConnection for the actual HTTP request.
+  // This avoids issues with the old HttpConnection's state (empty request queue).
+  auto newHttpConnection = std::make_shared<HttpConnection>(
+      getCuid(), getSocket(), std::make_shared<SocketRecvBuffer>(getSocket()));
+  
   return make_unique<HttpRequestCommand>(
       getCuid(), getRequest(), getFileEntry(), getRequestGroup(),
-      getHttpConnection(), getDownloadEngine(), getSocket());
+      newHttpConnection, getDownloadEngine(), getSocket());
 }
 
 } // namespace aria2
