@@ -122,6 +122,12 @@ createHttpRequest(const std::shared_ptr<Request>& req,
 
 bool HttpRequestCommand::executeInternal()
 {
+  A2_LOG_DEBUG(fmt("CUID#%" PRId64 " - HttpRequestCommand::executeInternal() START", getCuid()));
+  A2_LOG_DEBUG(fmt("CUID#%" PRId64 " - sendBufferIsEmpty=%d, outstandingRequests=%lu",
+                   getCuid(), 
+                   httpConnection_->sendBufferIsEmpty() ? 1 : 0,
+                   static_cast<unsigned long>(0))); // We can't access private member, so just log 0
+  
   // socket->setBlockingMode();
   if (httpConnection_->sendBufferIsEmpty()) {
 #ifdef ENABLE_SSL
@@ -220,12 +226,16 @@ bool HttpRequestCommand::executeInternal()
     httpConnection_->sendPendingData();
   }
   if (httpConnection_->sendBufferIsEmpty()) {
+    A2_LOG_DEBUG(fmt("CUID#%" PRId64 " - Request sent, creating HttpResponseCommand",
+                     getCuid()));
     getDownloadEngine()->addCommand(make_unique<HttpResponseCommand>(
         getCuid(), getRequest(), getFileEntry(), getRequestGroup(),
         httpConnection_, getDownloadEngine(), getSocket()));
     return true;
   }
   else {
+    A2_LOG_DEBUG(fmt("CUID#%" PRId64 " - Send buffer not empty, continuing to send",
+                     getCuid()));
     setReadCheckSocketIf(getSocket(), getSocket()->wantRead());
     setWriteCheckSocketIf(getSocket(), getSocket()->wantWrite());
     addCommandSelf();

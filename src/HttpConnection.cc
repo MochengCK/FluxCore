@@ -147,7 +147,11 @@ void HttpConnection::sendProxyRequest(std::unique_ptr<HttpRequest> httpRequest)
 
 std::unique_ptr<HttpResponse> HttpConnection::receiveResponse()
 {
+  A2_LOG_DEBUG(fmt("CUID#%" PRId64 " - HttpConnection::receiveResponse() called, outstandingRequests=%lu",
+                   cuid_, static_cast<unsigned long>(outstandingHttpRequests_.size())));
+  
   if (outstandingHttpRequests_.empty()) {
+    A2_LOG_ERROR(fmt("CUID#%" PRId64 " - No HttpRequestEntry found! This should not happen.", cuid_));
     throw DL_ABORT_EX(EX_NO_HTTP_REQUEST_ENTRY_FOUND);
   }
   if (socketRecvBuffer_->bufferEmpty()) {

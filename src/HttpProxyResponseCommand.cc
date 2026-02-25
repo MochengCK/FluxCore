@@ -60,12 +60,24 @@ std::unique_ptr<Command> HttpProxyResponseCommand::getNextCommand()
   // After CONNECT tunnel is established and TLS handshake is complete,
   // create a NEW HttpConnection for the actual HTTP request.
   // This avoids issues with the old HttpConnection's state (empty request queue).
+  // Also create a NEW SocketRecvBuffer to ensure clean state.
+  auto newSocketRecvBuffer = std::make_shared<SocketRecvBuffer>(getSocket());
   auto newHttpConnection = std::make_shared<HttpConnection>(
-      getCuid(), getSocket(), std::make_shared<SocketRecvBuffer>(getSocket()));
+      getCuid(), getSocket(), newSocketRecvBuffer);
   
-  return make_unique<HttpRequestCommand>(
+  auto cmd = make_unique<HttpRequestCommand>(
       getCuid(), getRequest(), getFileEntry(), getRequestGroup(),
       newHttpConnection, getDownloadEngine(), getSocket());
+  
+  // IMPORTANT: Set a dummy proxy request to signal that we're using a proxy.
+  // This prevents HttpRequestCommand from attempting TLS handshake again
+  // (it was already done in AbstractProxyResponseCommand after CONNECT).
+  // We use the original proxy request from the HttpConnection.
+  auto proxyReq = std::make_shared<Request>();
+  proxyReq->setUri("http://proxy");  // Dummy URI, just to mark as proxy
+  cmd->setProxyRequest(proxyReq);
+  
+  return cmd;
 }
 
 } // namespace aria2
