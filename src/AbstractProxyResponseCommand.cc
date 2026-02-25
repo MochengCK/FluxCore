@@ -56,7 +56,8 @@ AbstractProxyResponseCommand::AbstractProxyResponseCommand(
     const std::shared_ptr<HttpConnection>& httpConnection, DownloadEngine* e,
     const std::shared_ptr<SocketCore>& s)
     : AbstractCommand(cuid, req, fileEntry, requestGroup, e, s),
-      httpConnection_(httpConnection)
+      httpConnection_(httpConnection),
+      connectResponseReceived_(false)
 {
 }
 
@@ -64,15 +65,19 @@ AbstractProxyResponseCommand::~AbstractProxyResponseCommand() = default;
 
 bool AbstractProxyResponseCommand::executeInternal()
 {
-  std::shared_ptr<HttpResponse> httpResponse =
-      httpConnection_->receiveResponse();
-  if (!httpResponse) {
-    // the server has not responded our request yet.
-    addCommandSelf();
-    return false;
-  }
-  if (httpResponse->getStatusCode() != 200) {
-    throw DL_RETRY_EX(EX_PROXY_CONNECTION_FAILED);
+  // Only try to receive CONNECT response if we haven't received it yet
+  if (!connectResponseReceived_) {
+    std::shared_ptr<HttpResponse> httpResponse =
+        httpConnection_->receiveResponse();
+    if (!httpResponse) {
+      // the server has not responded our request yet.
+      addCommandSelf();
+      return false;
+    }
+    if (httpResponse->getStatusCode() != 200) {
+      throw DL_RETRY_EX(EX_PROXY_CONNECTION_FAILED);
+    }
+    connectResponseReceived_ = true;
   }
   
 #ifdef ENABLE_SSL

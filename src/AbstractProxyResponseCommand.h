@@ -45,6 +45,7 @@ class SocketCore;
 class AbstractProxyResponseCommand : public AbstractCommand {
 private:
   std::shared_ptr<HttpConnection> httpConnection_;
+  bool connectResponseReceived_;
 
 protected:
   virtual bool executeInternal() CXX11_OVERRIDE;
