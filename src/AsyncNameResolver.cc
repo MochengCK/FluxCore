@@ -75,17 +75,37 @@ void callback(void* arg, int status, int timeouts, ares_addrinfo* result)
     auto rv = getnameinfo(ap->ai_addr, ap->ai_addrlen, addrstring,
                           sizeof(addrstring), nullptr, 0, NI_NUMERICHOST);
     if (rv == 0) {
-      resolverPtr->resolvedAddresses_.push_back(addrstring);
-      A2_LOG_DEBUG(fmt("DNS resolved %s to %s", 
-                       resolverPtr->hostname_.c_str(), addrstring));
+      // Check for fake-ip addresses (commonly used by proxy software)
+      // 198.18.0.0/15 is a common fake-ip range used by Clash and similar proxies
+      bool isFakeIP = false;
+      if (ap->ai_family == AF_INET) {
+        struct sockaddr_in* addr_in = (struct sockaddr_in*)ap->ai_addr;
+        uint32_t ip = ntohl(addr_in->sin_addr.s_addr);
+        // Check if IP is in 198.18.0.0/15 range (198.18.0.0 - 198.19.255.255)
+        if ((ip >= 0xC6120000 && ip <= 0xC613FFFF)) {
+          isFakeIP = true;
+          A2_LOG_WARN(fmt("DNS resolved %s to fake-ip address %s. "
+                          "This is likely caused by proxy software (Clash/V2Ray) using fake-ip mode. "
+                          "Please configure your proxy to use real-ip mode or exclude this domain.",
+                          resolverPtr->hostname_.c_str(), addrstring));
+        }
+      }
+      
+      if (!isFakeIP) {
+        resolverPtr->resolvedAddresses_.push_back(addrstring);
+        A2_LOG_DEBUG(fmt("DNS resolved %s to %s", 
+                         resolverPtr->hostname_.c_str(), addrstring));
+      }
     }
   }
   ares_freeaddrinfo(result);
   if (resolverPtr->resolvedAddresses_.empty()) {
-    resolverPtr->error_ = "no address returned or address conversion failed";
+    resolverPtr->error_ = "DNS returned fake-ip or no valid addresses. "
+                          "If using proxy software (Clash/V2Ray), please switch from fake-ip to real-ip mode.";
     resolverPtr->status_ = AsyncNameResolver::STATUS_ERROR;
-    A2_LOG_DEBUG(fmt("DNS resolution failed for %s: no valid addresses", 
-                     resolverPtr->hostname_.c_str()));
+    A2_LOG_ERROR(fmt("DNS resolution failed for %s: %s", 
+                     resolverPtr->hostname_.c_str(), 
+                     resolverPtr->error_.c_str()));
   }
   else {
     resolverPtr->status_ = AsyncNameResolver::STATUS_SUCCESS;
