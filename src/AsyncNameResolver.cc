@@ -36,6 +36,12 @@
 
 #include <cstring>
 
+#ifdef _WIN32
+#include <ws2tcpip.h>
+#else
+#include <arpa/inet.h>
+#endif
+
 #include "A2STR.h"
 #include "LogFactory.h"
 #include "SocketCore.h"
@@ -50,7 +56,8 @@ void callback(void* arg, int status, int timeouts, ares_addrinfo* result)
   if (status != ARES_SUCCESS) {
     resolverPtr->error_ = ares_strerror(status);
     resolverPtr->status_ = AsyncNameResolver::STATUS_ERROR;
-    A2_LOG_DEBUG(fmt("DNS resolution failed: %s (timeouts: %d)", 
+    A2_LOG_DEBUG(fmt("DNS resolution failed for %s: %s (timeouts: %d)", 
+                     resolverPtr->hostname_.c_str(),
                      ares_strerror(status), timeouts));
     return;
   }
@@ -58,7 +65,8 @@ void callback(void* arg, int status, int timeouts, ares_addrinfo* result)
   if (!result) {
     resolverPtr->error_ = "no result returned from DNS query";
     resolverPtr->status_ = AsyncNameResolver::STATUS_ERROR;
-    A2_LOG_DEBUG("DNS resolution failed: no result returned");
+    A2_LOG_DEBUG(fmt("DNS resolution failed for %s: no result returned", 
+                     resolverPtr->hostname_.c_str()));
     return;
   }
   
@@ -68,15 +76,22 @@ void callback(void* arg, int status, int timeouts, ares_addrinfo* result)
                           sizeof(addrstring), nullptr, 0, NI_NUMERICHOST);
     if (rv == 0) {
       resolverPtr->resolvedAddresses_.push_back(addrstring);
+      A2_LOG_DEBUG(fmt("DNS resolved %s to %s", 
+                       resolverPtr->hostname_.c_str(), addrstring));
     }
   }
   ares_freeaddrinfo(result);
   if (resolverPtr->resolvedAddresses_.empty()) {
     resolverPtr->error_ = "no address returned or address conversion failed";
     resolverPtr->status_ = AsyncNameResolver::STATUS_ERROR;
+    A2_LOG_DEBUG(fmt("DNS resolution failed for %s: no valid addresses", 
+                     resolverPtr->hostname_.c_str()));
   }
   else {
     resolverPtr->status_ = AsyncNameResolver::STATUS_SUCCESS;
+    A2_LOG_DEBUG(fmt("DNS resolution successful for %s: %zu address(es) found", 
+                     resolverPtr->hostname_.c_str(), 
+                     resolverPtr->resolvedAddresses_.size()));
   }
 }
 
@@ -126,12 +141,31 @@ AsyncNameResolver::AsyncNameResolver(int family, const std::string& servers)
     : status_(STATUS_READY), family_(family), channel_(nullptr)
 {
   // c-ares 1.34.6+ uses ares_channel_t* instead of ares_channel
-  // Use ares_init_options() to set socket state callback
+  // Use ares_init_options() to set socket state callback and other options
   ares_options opts{};
   opts.sock_state_cb = sock_state_cb;
   opts.sock_state_cb_data = this;
   
-  int status = ares_init_options(&channel_, &opts, ARES_OPT_SOCK_STATE_CB);
+  // Configure options to use system DNS and improve reliability
+  int optmask = ARES_OPT_SOCK_STATE_CB;
+  
+  // Set timeout and retry parameters for better reliability
+  opts.timeout = 5000;  // 5 seconds timeout per query
+  opts.tries = 3;       // Retry 3 times
+  optmask |= ARES_OPT_TIMEOUTMS | ARES_OPT_TRIES;
+  
+  // Enable EDNS for better DNS support
+  opts.ednspsz = 1232;  // Standard EDNS buffer size
+  optmask |= ARES_OPT_EDNSPSZ;
+  
+  // On Windows, explicitly request to use system DNS configuration
+  // This helps c-ares properly read Windows DNS settings
+#ifdef _WIN32
+  opts.flags = ARES_FLAG_USEVC;  // Use TCP for DNS queries on Windows for better reliability
+  optmask |= ARES_OPT_FLAGS;
+#endif
+  
+  int status = ares_init_options(&channel_, &opts, optmask);
   if (status != ARES_SUCCESS) {
     A2_LOG_ERROR(fmt("ares_init_options failed: %s", ares_strerror(status)));
     return;
@@ -141,7 +175,40 @@ AsyncNameResolver::AsyncNameResolver(int family, const std::string& servers)
   if (!servers.empty()) {
     status = ares_set_servers_csv(channel_, servers.c_str());
     if (status != ARES_SUCCESS) {
-      A2_LOG_DEBUG(fmt("ares_set_servers_csv failed: %s", ares_strerror(status)));
+      A2_LOG_ERROR(fmt("ares_set_servers_csv failed: %s", ares_strerror(status)));
+    }
+    else {
+      A2_LOG_INFO(fmt("Using custom DNS servers: %s", servers.c_str()));
+    }
+  }
+  else {
+    // Log that we're using system DNS
+    A2_LOG_INFO("Using system DNS configuration");
+    
+    // Verify that c-ares can access system DNS servers
+    // This is especially important on Windows where DNS configuration
+    // might not be properly detected
+    ares_addr_port_node* servers_list = nullptr;
+    status = ares_get_servers_ports(channel_, &servers_list);
+    if (status == ARES_SUCCESS && servers_list) {
+      A2_LOG_DEBUG("System DNS servers detected:");
+      for (ares_addr_port_node* node = servers_list; node; node = node->next) {
+        char addr_buf[46];
+        const char* addr_str = nullptr;
+        if (node->family == AF_INET) {
+          addr_str = inet_ntop(AF_INET, &node->addr.addr4, addr_buf, sizeof(addr_buf));
+        } else if (node->family == AF_INET6) {
+          addr_str = inet_ntop(AF_INET6, &node->addr.addr6, addr_buf, sizeof(addr_buf));
+        }
+        if (addr_str) {
+          A2_LOG_DEBUG(fmt("  - %s:%d", addr_str, node->udp_port));
+        }
+      }
+      ares_free_data(servers_list);
+    }
+    else {
+      A2_LOG_WARN(fmt("Failed to get system DNS servers: %s. DNS resolution may fail.", 
+                      ares_strerror(status)));
     }
   }
 }
@@ -161,7 +228,12 @@ void AsyncNameResolver::resolve(const std::string& name)
 
   ares_addrinfo_hints hints{};
   hints.ai_family = family_;
+  hints.ai_socktype = SOCK_STREAM;  // Specify socket type for better compatibility
+  hints.ai_flags = ARES_AI_CANONNAME;  // Request canonical name
 
+  A2_LOG_DEBUG(fmt("Starting DNS resolution for %s (family: %d)", 
+                   name.c_str(), family_));
+  
   ares_getaddrinfo(channel_, name.c_str(), nullptr, &hints, callback, this);
 }
 
