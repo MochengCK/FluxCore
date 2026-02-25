@@ -133,13 +133,18 @@ bool HttpRequestCommand::executeInternal()
       
       // Only skip TLS if we're using an explicit proxy with GET method
       // (proxy handles the connection, not CONNECT tunnel)
+      // OR if we're using CONNECT tunnel (TLS already established in proxy response)
       bool skipTLS = proxyRequest_ && 
-                     resolveProxyMethod(getRequest()->getProtocol()) == V_GET;
+                     (resolveProxyMethod(getRequest()->getProtocol()) == V_GET ||
+                      resolveProxyMethod(getRequest()->getProtocol()) == V_TUNNEL);
       
-      A2_LOG_DEBUG(fmt("CUID#%" PRId64 " - skipTLS=%d, attempting TLS handshake",
-                       getCuid(), skipTLS ? 1 : 0));
+      A2_LOG_DEBUG(fmt("CUID#%" PRId64 " - skipTLS=%d, socket->isSecure()=%d",
+                       getCuid(), skipTLS ? 1 : 0, getSocket()->isSecure() ? 1 : 0));
       
-      if (!skipTLS && !getSocket()->tlsConnect(getRequest()->getHost())) {
+      // Skip TLS handshake if:
+      // 1. Using GET proxy method (proxy handles connection)
+      // 2. Using CONNECT tunnel and TLS is already established
+      if (!skipTLS && !getSocket()->isSecure() && !getSocket()->tlsConnect(getRequest()->getHost())) {
         A2_LOG_DEBUG(fmt("CUID#%" PRId64 " - TLS handshake in progress",
                          getCuid()));
         setReadCheckSocketIf(getSocket(), getSocket()->wantRead());
