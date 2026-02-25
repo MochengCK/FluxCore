@@ -88,6 +88,11 @@ bool AbstractProxyResponseCommand::executeInternal()
   }
 #endif // ENABLE_SSL
   
+  // Disable socket event checking before creating the next command
+  // to prevent this command from being triggered again
+  disableReadCheckSocket();
+  disableWriteCheckSocket();
+  
   getDownloadEngine()->addCommand(getNextCommand());
   return true;
 }
