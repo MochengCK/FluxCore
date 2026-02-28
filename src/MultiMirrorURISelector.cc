@@ -78,24 +78,19 @@ std::string MultiMirrorURISelector::selectBestAvailableUri(
     std::string host = uri::getFieldString(us, USR_HOST, uri.c_str());
     std::string protocol = uri::getFieldString(us, USR_SCHEME, uri.c_str());
     
-    // 检查 host 是否在 usedHosts 中
-    bool hostUsed = false;
-    for (const auto& usedHost : usedHosts) {
-      if (usedHost.second == host) {
-        hostUsed = true;
-        break;
-      }
-    }
-    
-    if (hostUsed) {
-      continue;
-    }
-    
     // 获取这个 URI 已经被选择的次数
     int selectionCount = 0;
     auto it = uriSelectionCount_.find(uri);
     if (it != uriSelectionCount_.end()) {
       selectionCount = it->second;
+    }
+    
+    // 检查这个主机当前有多少个连接在使用
+    int currentHostConnections = 0;
+    for (const auto& usedHost : usedHosts) {
+      if (usedHost.second == host) {
+        currentHostConnections++;
+      }
     }
     
     // 获取服务器统计信息
@@ -106,14 +101,16 @@ std::string MultiMirrorURISelector::selectBestAvailableUri(
                       ss->getMultiConnectionAvgSpeed());
     }
     
-    // 优先级：使用次数少的 URI > 速度快的 URI
-    // 使用负的选择次数作为优先级的主要部分，速度作为次要部分
-    int priority = (-selectionCount * 10000000) + speed;
+    // 优先级计算：
+    // 1. 选择次数少的 URI 优先（主要因素）
+    // 2. 当前连接数少的主机优先（次要因素）
+    // 3. 速度快的服务器优先（辅助因素）
+    int priority = (-selectionCount * 100000000) + (-currentHostConnections * 1000000) + speed;
     
     candidates.push_back(std::make_pair(priority, uri));
     
-    A2_LOG_DEBUG(fmt("MultiMirrorURISelector: URI %s, selections=%d, speed=%d, priority=%d",
-                     uri.c_str(), selectionCount, speed, priority));
+    A2_LOG_DEBUG(fmt("MultiMirrorURISelector: URI %s, selections=%d, currentConns=%d, speed=%d, priority=%d",
+                     uri.c_str(), selectionCount, currentHostConnections, speed, priority));
   }
   
   if (candidates.empty()) {
