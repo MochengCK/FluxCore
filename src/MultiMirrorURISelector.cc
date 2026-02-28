@@ -66,8 +66,8 @@ std::string MultiMirrorURISelector::selectBestAvailableUri(
     return A2STR::NIL;
   }
 
-  // Find URIs that are not currently being used by any connection
-  std::vector<std::pair<int, std::string>> availableUris;
+  // 找到使用次数最少的 URI
+  std::vector<std::pair<int, std::string>> candidates;
   
   for (const auto& uri : uris) {
     uri_split_result us;
@@ -78,11 +78,7 @@ std::string MultiMirrorURISelector::selectBestAvailableUri(
     std::string host = uri::getFieldString(us, USR_HOST, uri.c_str());
     std::string protocol = uri::getFieldString(us, USR_SCHEME, uri.c_str());
     
-    // Check if this URI is already being used
-    auto it = uriToCuids_.find(uri);
-    int currentUsers = (it != uriToCuids_.end()) ? it->second.size() : 0;
-    
-    // Skip if this host is in usedHosts
+    // 检查 host 是否在 usedHosts 中
     bool hostUsed = false;
     for (const auto& usedHost : usedHosts) {
       if (usedHost.second == host) {
@@ -95,7 +91,14 @@ std::string MultiMirrorURISelector::selectBestAvailableUri(
       continue;
     }
     
-    // Get server statistics for speed-based selection
+    // 获取这个 URI 已经被选择的次数
+    int selectionCount = 0;
+    auto it = uriSelectionCount_.find(uri);
+    if (it != uriSelectionCount_.end()) {
+      selectionCount = it->second;
+    }
+    
+    // 获取服务器统计信息
     std::shared_ptr<ServerStat> ss = serverStatMan_->find(host, protocol);
     int speed = 0;
     if (ss) {
@@ -103,41 +106,49 @@ std::string MultiMirrorURISelector::selectBestAvailableUri(
                       ss->getMultiConnectionAvgSpeed());
     }
     
-    // Prefer URIs that are not being used, then by speed
-    // Priority: unused URIs with high speed > unused URIs > used URIs with high speed
-    int priority = (currentUsers == 0 ? 1000000 : 0) + speed;
+    // 优先级：使用次数少的 URI > 速度快的 URI
+    // 使用负的选择次数作为优先级的主要部分，速度作为次要部分
+    int priority = (-selectionCount * 10000000) + speed;
     
-    availableUris.push_back(std::make_pair(priority, uri));
+    candidates.push_back(std::make_pair(priority, uri));
+    
+    A2_LOG_DEBUG(fmt("MultiMirrorURISelector: URI %s, selections=%d, speed=%d, priority=%d",
+                     uri.c_str(), selectionCount, speed, priority));
   }
   
-  if (availableUris.empty()) {
+  if (candidates.empty()) {
+    A2_LOG_DEBUG("MultiMirrorURISelector: no candidates available");
     return A2STR::NIL;
   }
   
-  // Sort by priority (highest first)
-  std::sort(availableUris.begin(), availableUris.end(),
+  // 按优先级排序（最高优先级在前）
+  std::sort(candidates.begin(), candidates.end(),
             [](const std::pair<int, std::string>& a,
                const std::pair<int, std::string>& b) {
               return a.first > b.first;
             });
   
-  return availableUris.front().second;
+  std::string selected = candidates.front().second;
+  A2_LOG_DEBUG(fmt("MultiMirrorURISelector: selected %s from %lu candidates",
+                   selected.c_str(), static_cast<unsigned long>(candidates.size())));
+  
+  return selected;
 }
 
 std::string MultiMirrorURISelector::select(
     FileEntry* fileEntry,
     const std::vector<std::pair<size_t, std::string>>& usedHosts)
 {
-  A2_LOG_DEBUG(fmt("MultiMirrorURISelector: selecting URI for connection"));
+  A2_LOG_DEBUG(fmt("MultiMirrorURISelector: selecting URI"));
   
   std::string selected = selectBestAvailableUri(fileEntry, usedHosts);
   
   if (selected != A2STR::NIL) {
-    std::deque<std::string>& uris = fileEntry->getRemainingUris();
-    uris.erase(std::find(std::begin(uris), std::end(uris), selected));
+    // 记录这个 URI 被选择了
+    uriSelectionCount_[selected]++;
     
-    A2_LOG_DEBUG(fmt("MultiMirrorURISelector: selected URI: %s", 
-                     selected.c_str()));
+    A2_LOG_DEBUG(fmt("MultiMirrorURISelector: selected URI: %s (total selections: %d)", 
+                     selected.c_str(), uriSelectionCount_[selected]));
   }
   else {
     A2_LOG_DEBUG("MultiMirrorURISelector: no available URI found");
@@ -148,8 +159,7 @@ std::string MultiMirrorURISelector::select(
 
 void MultiMirrorURISelector::resetCounters()
 {
-  uriToCuids_.clear();
-  cuidToUri_.clear();
+  uriSelectionCount_.clear();
   A2_LOG_DEBUG("MultiMirrorURISelector: counters reset");
 }
 

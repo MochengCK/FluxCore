@@ -39,12 +39,8 @@
 
 #include <memory>
 #include <map>
-#include <set>
-#include <cstdint>
 
 namespace aria2 {
-
-typedef int64_t cuid_t;
 
 class ServerStatMan;
 class RequestGroup;
@@ -54,11 +50,8 @@ private:
   std::shared_ptr<ServerStatMan> serverStatMan_;
   RequestGroup* requestGroup_;
   
-  // Track which URI is assigned to which connection (cuid)
-  std::map<std::string, std::set<cuid_t>> uriToCuids_;
-  
-  // Track which cuid is using which URI
-  std::map<cuid_t, std::string> cuidToUri_;
+  // 跟踪每个 URI 被选择的次数
+  std::map<std::string, int> uriSelectionCount_;
 
   std::string selectBestAvailableUri(
       FileEntry* fileEntry,
