@@ -203,8 +203,14 @@ void SegmentMan::getInFlightSegment(
 std::shared_ptr<Segment> SegmentMan::getSegment(cuid_t cuid,
                                                 size_t minSplitSize)
 {
+  // Use dynamically calculated segment size
+  size_t dynamicSize = static_cast<size_t>(getDynamicSegmentSize());
+  
+  // Use the larger of specified minSplitSize or dynamic size
+  size_t actualSize = std::max(minSplitSize, dynamicSize);
+  
   std::shared_ptr<Piece> piece = pieceStorage_->getMissingPiece(
-      minSplitSize, ignoreBitfield_.getFilterBitfield(),
+      actualSize, ignoreBitfield_.getFilterBitfield(),
       ignoreBitfield_.getBitfieldLength(), cuid);
   return checkoutSegment(cuid, piece);
 }
@@ -484,6 +490,288 @@ void SegmentMan::recognizeSegmentFor(
 bool SegmentMan::allSegmentsIgnored() const
 {
   return ignoreBitfield_.isAllFilterBitSet();
+}
+
+// Dynamic segmentation implementation
+void SegmentMan::updateConnectionStats(cuid_t cuid, int64_t downloadedBytes)
+{
+  auto now = std::chrono::steady_clock::now();
+  auto& stats = connectionStats_[cuid];
+  
+  if (stats.cuid == 0) {
+    // First time initialization
+    stats.cuid = cuid;
+    stats.startTime = now;
+    stats.lastUpdateTime = now;
+    stats.totalDownloaded = 0;
+    stats.currentSpeed = 0;
+    stats.avgSpeed = 0;
+    stats.remainingBytes = 0;
+    stats.isIdle = false;
+  }
+  
+  // Calculate current speed
+  auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+      now - stats.lastUpdateTime);
+  
+  if (elapsed.count() > 0) {
+    int64_t newBytes = downloadedBytes - stats.totalDownloaded;
+    stats.currentSpeed = static_cast<double>(newBytes) * 1000.0 / elapsed.count();
+  }
+  
+  stats.totalDownloaded = downloadedBytes;
+  
+  // Calculate average speed
+  auto totalElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+      now - stats.startTime);
+  if (totalElapsed.count() > 0) {
+    stats.avgSpeed = static_cast<double>(stats.totalDownloaded) * 1000.0 / 
+                     totalElapsed.count();
+  }
+  
+  // Update remaining bytes
+  stats.remainingBytes = 0;
+  for (const auto& entry : usedSegmentEntries_) {
+    if (entry->cuid == cuid) {
+      const auto& seg = entry->segment;
+      stats.remainingBytes += seg->getLength() - seg->getWrittenLength();
+    }
+  }
+  
+  stats.isIdle = (stats.remainingBytes == 0);
+  stats.lastUpdateTime = now;
+}
+
+int64_t SegmentMan::getDynamicSegmentSize() const
+{
+  int64_t totalRemaining = getTotalLength() - getDownloadLength();
+  if (totalRemaining <= 0) {
+    return DYNAMIC_MIN_SPLIT_SIZE;
+  }
+  
+  double progress = getDownloadProgress();
+  int activeConnections = 0;
+  
+  // Count active connections
+  for (const auto& pair : connectionStats_) {
+    if (!pair.second.isIdle) {
+      activeConnections++;
+    }
+  }
+  
+  if (activeConnections == 0) {
+    activeConnections = 1;
+  }
+  
+  int64_t segmentSize;
+  
+  if (progress > PREEMPTION_PROGRESS_THRESHOLD) {
+    // Near completion, use smaller segments to better utilize all connections
+    segmentSize = std::max(totalRemaining / (activeConnections * 2), 
+                          DYNAMIC_MIN_SPLIT_SIZE);
+  } else {
+    // Normal download, use standard segments
+    // Allocate ~4 segments per connection for scheduling flexibility
+    segmentSize = totalRemaining / (activeConnections * 4);
+    segmentSize = std::clamp(segmentSize, DYNAMIC_MIN_SPLIT_SIZE, 
+                             DYNAMIC_MAX_SPLIT_SIZE);
+  }
+  
+  return segmentSize;
+}
+
+void SegmentMan::scheduleSegments()
+{
+  auto now = std::chrono::steady_clock::now();
+  
+  // Check schedule interval
+  if (std::chrono::duration_cast<std::chrono::seconds>(
+        now - lastScheduleTime_).count() < SCHEDULE_INTERVAL_SEC) {
+    return;
+  }
+  
+  lastScheduleTime_ = now;
+  
+  // Find slow connections that need reallocation
+  std::vector<cuid_t> slowConnections;
+  for (const auto& pair : connectionStats_) {
+    if (shouldReallocateSegment(pair.first)) {
+      slowConnections.push_back(pair.first);
+    }
+  }
+  
+  // Perform reallocation
+  for (cuid_t slowCuid : slowConnections) {
+    if (splitAndReallocateSegment(slowCuid)) {
+      A2_LOG_INFO(fmt("Reallocated segment from slow connection CUID#%" PRId64, 
+                      slowCuid));
+    }
+  }
+}
+
+bool SegmentMan::shouldReallocateSegment(cuid_t cuid) const
+{
+  auto it = connectionStats_.find(cuid);
+  if (it == connectionStats_.end() || it->second.isIdle) {
+    return false;
+  }
+  
+  const auto& stats = it->second;
+  
+  // Not worth reallocating if remaining is too small
+  if (stats.remainingBytes < DYNAMIC_MIN_SPLIT_SIZE * 2) {
+    return false;
+  }
+  
+  double avgSpeed = calculateAverageSpeed();
+  if (avgSpeed <= 0) {
+    return false;
+  }
+  
+  double progress = getDownloadProgress();
+  
+  // Condition 1: Speed too slow (below 30% of average)
+  if (stats.currentSpeed < avgSpeed * SLOW_CONNECTION_THRESHOLD) {
+    return true;
+  }
+  
+  // Condition 2: Near completion and slow (progress > 85% and speed < 100KB/s)
+  if (progress > PREEMPTION_PROGRESS_THRESHOLD && 
+      stats.currentSpeed < 100 * 1024) {
+    return true;
+  }
+  
+  // Condition 3: Remaining bytes far exceed average
+  int64_t totalRemaining = 0;
+  int activeCount = 0;
+  for (const auto& pair : connectionStats_) {
+    if (!pair.second.isIdle) {
+      totalRemaining += pair.second.remainingBytes;
+      activeCount++;
+    }
+  }
+  
+  if (activeCount > 1) {
+    int64_t avgRemaining = totalRemaining / activeCount;
+    if (stats.remainingBytes > avgRemaining * 3) {
+      return true;
+    }
+  }
+  
+  return false;
+}
+
+bool SegmentMan::splitAndReallocateSegment(cuid_t slowCuid)
+{
+  // Find slow connection's segment
+  std::shared_ptr<SegmentEntry> slowEntry;
+  for (const auto& entry : usedSegmentEntries_) {
+    if (entry->cuid == slowCuid) {
+      slowEntry = entry;
+      break;
+    }
+  }
+  
+  if (!slowEntry) {
+    return false;
+  }
+  
+  const auto& slowSegment = slowEntry->segment;
+  int64_t remaining = slowSegment->getLength() - slowSegment->getWrittenLength();
+  
+  // Calculate split size (half of remaining)
+  int64_t splitSize = remaining / 2;
+  if (splitSize < DYNAMIC_MIN_SPLIT_SIZE) {
+    return false;
+  }
+  
+  // Find best connection (idle or fastest)
+  cuid_t bestCuid = findBestConnection(slowCuid);
+  if (bestCuid == 0) {
+    return false;
+  }
+  
+  // Get a new piece for the fast connection
+  auto piece = pieceStorage_->getMissingPiece(splitSize, 
+                                              ignoreBitfield_.getFilterBitfield(),
+                                              ignoreBitfield_.getBitfieldLength(), 
+                                              bestCuid);
+  if (!piece) {
+    return false;
+  }
+  
+  auto newSegment = checkoutSegment(bestCuid, piece);
+  if (!newSegment) {
+    return false;
+  }
+  
+  auto slowIt = connectionStats_.find(slowCuid);
+  if (slowIt != connectionStats_.end()) {
+    A2_LOG_INFO(fmt("Split segment: slow CUID#%" PRId64 " (%.1f KB/s, %" PRId64 " bytes) "
+                    "-> fast CUID#%" PRId64 " (%" PRId64 " bytes)",
+                    slowCuid, 
+                    slowIt->second.currentSpeed / 1024.0,
+                    remaining,
+                    bestCuid,
+                    splitSize));
+  }
+  
+  return true;
+}
+
+cuid_t SegmentMan::findBestConnection(cuid_t excludeCuid) const
+{
+  cuid_t bestCuid = 0;
+  double bestSpeed = -1;
+  
+  for (const auto& pair : connectionStats_) {
+    if (pair.first == excludeCuid) {
+      continue;
+    }
+    
+    // Prefer idle connections
+    if (pair.second.isIdle) {
+      return pair.first;
+    }
+    
+    // Otherwise choose fastest connection
+    if (pair.second.currentSpeed > bestSpeed) {
+      bestSpeed = pair.second.currentSpeed;
+      bestCuid = pair.first;
+    }
+  }
+  
+  return bestCuid;
+}
+
+double SegmentMan::calculateAverageSpeed() const
+{
+  if (connectionStats_.empty()) {
+    return 0;
+  }
+  
+  double totalSpeed = 0;
+  int activeCount = 0;
+  
+  for (const auto& pair : connectionStats_) {
+    if (!pair.second.isIdle) {
+      totalSpeed += pair.second.currentSpeed;
+      activeCount++;
+    }
+  }
+  
+  return activeCount > 0 ? totalSpeed / activeCount : 0;
+}
+
+double SegmentMan::getDownloadProgress() const
+{
+  int64_t total = getTotalLength();
+  if (total <= 0) {
+    return 0;
+  }
+  
+  int64_t downloaded = getDownloadLength();
+  return static_cast<double>(downloaded) / total;
 }
 
 } // namespace aria2

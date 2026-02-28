@@ -93,6 +93,32 @@ private:
 
   BitfieldMan ignoreBitfield_;
 
+  // Dynamic segmentation support
+  struct ConnectionStats {
+    cuid_t cuid;
+    int64_t totalDownloaded;
+    std::chrono::steady_clock::time_point startTime;
+    std::chrono::steady_clock::time_point lastUpdateTime;
+    double currentSpeed;      // bytes/sec
+    double avgSpeed;          // bytes/sec
+    int64_t remainingBytes;
+    bool isIdle;
+    
+    ConnectionStats() 
+      : cuid(0), totalDownloaded(0), currentSpeed(0), avgSpeed(0), 
+        remainingBytes(0), isIdle(false) {}
+  };
+  
+  std::map<cuid_t, ConnectionStats> connectionStats_;
+  std::chrono::steady_clock::time_point lastScheduleTime_;
+  
+  // Dynamic segmentation constants
+  static constexpr int64_t DYNAMIC_MIN_SPLIT_SIZE = 256 * 1024;      // 256KB
+  static constexpr int64_t DYNAMIC_MAX_SPLIT_SIZE = 16 * 1024 * 1024; // 16MB
+  static constexpr double SLOW_CONNECTION_THRESHOLD = 0.3;             // 30%
+  static constexpr double PREEMPTION_PROGRESS_THRESHOLD = 0.85;        // 85%
+  static constexpr int SCHEDULE_INTERVAL_SEC = 1;                      // 1 second
+
   std::shared_ptr<Segment> checkoutSegment(cuid_t cuid,
                                            const std::shared_ptr<Piece>& piece);
 
@@ -227,6 +253,16 @@ public:
   void recognizeSegmentFor(const std::shared_ptr<FileEntry>& fileEntry);
 
   bool allSegmentsIgnored() const;
+
+  // Dynamic segmentation methods
+  void updateConnectionStats(cuid_t cuid, int64_t downloadedBytes);
+  int64_t getDynamicSegmentSize() const;
+  void scheduleSegments();
+  bool shouldReallocateSegment(cuid_t cuid) const;
+  bool splitAndReallocateSegment(cuid_t slowCuid);
+  cuid_t findBestConnection(cuid_t excludeCuid = 0) const;
+  double calculateAverageSpeed() const;
+  double getDownloadProgress() const;
 };
 
 } // namespace aria2

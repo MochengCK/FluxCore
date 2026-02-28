@@ -132,6 +132,13 @@ void flushWrDiskCacheEntry(WrDiskCache* wrDiskCache,
 
 bool DownloadCommand::executeInternal()
 {
+  // Dynamic segmentation: Update connection stats and schedule segments
+  if (getSegmentMan()) {
+    int64_t downloaded = peerStat_ ? peerStat_->getSessionDownloadLength() : 0;
+    getSegmentMan()->updateConnectionStats(getCuid(), downloaded);
+    getSegmentMan()->scheduleSegments();
+  }
+  
   if (getDownloadEngine()
           ->getRequestGroupMan()
           ->doesOverallDownloadSpeedExceed() ||
