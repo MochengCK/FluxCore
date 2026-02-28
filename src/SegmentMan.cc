@@ -573,8 +573,12 @@ int64_t SegmentMan::getDynamicSegmentSize() const
     // Normal download, use standard segments
     // Allocate ~4 segments per connection for scheduling flexibility
     segmentSize = totalRemaining / (activeConnections * 4);
-    segmentSize = std::clamp(segmentSize, DYNAMIC_MIN_SPLIT_SIZE, 
-                             DYNAMIC_MAX_SPLIT_SIZE);
+    // Manual clamp for C++11/14 compatibility
+    if (segmentSize < DYNAMIC_MIN_SPLIT_SIZE) {
+      segmentSize = DYNAMIC_MIN_SPLIT_SIZE;
+    } else if (segmentSize > DYNAMIC_MAX_SPLIT_SIZE) {
+      segmentSize = DYNAMIC_MAX_SPLIT_SIZE;
+    }
   }
   
   return segmentSize;
