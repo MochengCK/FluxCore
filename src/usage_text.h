@@ -495,7 +495,12 @@
     "                              already been tested, returns mirrors which has to\n" \
     "                              be tested again. Otherwise, it doesn't select\n" \
     "                              anymore mirrors. Like 'feedback', it uses a\n" \
-    "                              performance profile of servers.")
+    "                              performance profile of servers.\n"   \
+    "                              If 'multimirror' is given, enables concurrent\n" \
+    "                              multi-mirror downloading. Different mirrors\n" \
+    "                              download different segments simultaneously,\n" \
+    "                              maximizing download speed by utilizing multiple\n" \
+    "                              sources at once.")
 #define TEXT_SERVER_STAT_OF                                             \
   _(" --server-stat-of=FILE        Specify the filename to which performance profile\n" \
     "                              of the servers is saved. You can load saved data\n" \

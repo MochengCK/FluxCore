@@ -92,6 +92,7 @@ extern const std::string V_INORDER;
 extern const std::string A2_V_RANDOM;
 extern const std::string V_FEEDBACK;
 extern const std::string V_ADAPTIVE;
+extern const std::string V_MULTIMIRROR;
 extern const std::string V_LIBUV;
 extern const std::string V_EPOLL;
 extern const std::string V_KQUEUE;

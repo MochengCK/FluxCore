@@ -135,6 +135,7 @@ const std::string V_INORDER("inorder");
 const std::string A2_V_RANDOM("random");
 const std::string V_FEEDBACK("feedback");
 const std::string V_ADAPTIVE("adaptive");
+const std::string V_MULTIMIRROR("multimirror");
 const std::string V_LIBUV("libuv");
 const std::string V_EPOLL("epoll");
 const std::string V_KQUEUE("kqueue");
@@ -250,7 +251,7 @@ PrefPtr PREF_SUMMARY_INTERVAL = makePref("summary-interval");
 PrefPtr PREF_LOG_LEVEL = makePref("log-level");
 // value: debug, info, notice, warn, error
 PrefPtr PREF_CONSOLE_LOG_LEVEL = makePref("console-log-level");
-// value: inorder | feedback | adaptive
+// value: inorder | feedback | adaptive | multimirror
 PrefPtr PREF_URI_SELECTOR = makePref("uri-selector");
 // value: 1*digit
 PrefPtr PREF_SERVER_STAT_TIMEOUT = makePref("server-stat-timeout");

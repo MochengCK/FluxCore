@@ -58,6 +58,7 @@
 #include "FeedbackURISelector.h"
 #include "InorderURISelector.h"
 #include "AdaptiveURISelector.h"
+#include "MultiMirrorURISelector.h"
 #include "Option.h"
 #include "prefs.h"
 #include "File.h"
@@ -498,6 +499,10 @@ void RequestGroupMan::configureRequestGroup(
   else if (uriSelectorValue == V_ADAPTIVE) {
     requestGroup->setURISelector(
         make_unique<AdaptiveURISelector>(serverStatMan_, requestGroup.get()));
+  }
+  else if (uriSelectorValue == V_MULTIMIRROR) {
+    requestGroup->setURISelector(
+        make_unique<MultiMirrorURISelector>(serverStatMan_, requestGroup.get()));
   }
 }
 

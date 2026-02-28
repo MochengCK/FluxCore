@@ -1008,7 +1008,7 @@ std::vector<OptionHandler*> OptionHandlerFactory::createOptionHandlers()
   {
     OptionHandler* op(new ParameterOptionHandler(
         PREF_URI_SELECTOR, TEXT_URI_SELECTOR, V_FEEDBACK,
-        {V_INORDER, V_FEEDBACK, V_ADAPTIVE}));
+        {V_INORDER, V_FEEDBACK, V_ADAPTIVE, V_MULTIMIRROR}));
     op->addTag(TAG_FTP);
     op->addTag(TAG_HTTP);
     op->setInitialOption(true);
