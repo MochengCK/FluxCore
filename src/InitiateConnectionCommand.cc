@@ -53,8 +53,137 @@
 #include "SocketRecvBuffer.h"
 #include "BackupIPv4ConnectCommand.h"
 #include "ConnectCommand.h"
+#include <algorithm>
+#include <chrono>
+#include <thread>
+#include <future>
+#include <vector>
 
 namespace aria2 {
+
+// 快速连接探测结构
+struct ConnectionProbeResult {
+  std::string ipaddr;
+  int64_t latencyMs;  // 连接延迟（毫秒）
+  bool success;
+  
+  ConnectionProbeResult() : latencyMs(-1), success(false) {}
+  ConnectionProbeResult(const std::string& ip, int64_t latency, bool succ)
+    : ipaddr(ip), latencyMs(latency), success(succ) {}
+};
+
+// IP 合法性过滤：过滤掉私有地址、保留地址等
+static bool isValidPublicIP(const std::string& ipaddr)
+{
+  char buf[sizeof(in6_addr)];
+  
+  // 检查 IPv4
+  if (inetPton(AF_INET, ipaddr.c_str(), &buf) == 0) {
+    uint32_t addr;
+    memcpy(&addr, buf, sizeof(addr));
+    addr = ntohl(addr);
+    
+    // 过滤私有地址和保留地址
+    // 10.0.0.0/8
+    if ((addr & 0xFF000000) == 0x0A000000) return false;
+    // 172.16.0.0/12
+    if ((addr & 0xFFF00000) == 0xAC100000) return false;
+    // 192.168.0.0/16
+    if ((addr & 0xFFFF0000) == 0xC0A80000) return false;
+    // 127.0.0.0/8 (loopback)
+    if ((addr & 0xFF000000) == 0x7F000000) return false;
+    // 169.254.0.0/16 (link-local)
+    if ((addr & 0xFFFF0000) == 0xA9FE0000) return false;
+    // 0.0.0.0/8
+    if ((addr & 0xFF000000) == 0x00000000) return false;
+    // 224.0.0.0/4 (multicast)
+    if ((addr & 0xF0000000) == 0xE0000000) return false;
+    // 240.0.0.0/4 (reserved)
+    if ((addr & 0xF0000000) == 0xF0000000) return false;
+    
+    return true;
+  }
+  
+  // 检查 IPv6
+  if (inetPton(AF_INET6, ipaddr.c_str(), &buf) == 0) {
+    const uint8_t* addr6 = reinterpret_cast<const uint8_t*>(buf);
+    
+    // ::1 (loopback)
+    bool isLoopback = true;
+    for (int i = 0; i < 15; ++i) {
+      if (addr6[i] != 0) {
+        isLoopback = false;
+        break;
+      }
+    }
+    if (isLoopback && addr6[15] == 1) return false;
+    
+    // fe80::/10 (link-local)
+    if (addr6[0] == 0xfe && (addr6[1] & 0xc0) == 0x80) return false;
+    
+    // fc00::/7 (unique local)
+    if ((addr6[0] & 0xfe) == 0xfc) return false;
+    
+    // ff00::/8 (multicast)
+    if (addr6[0] == 0xff) return false;
+    
+    return true;
+  }
+  
+  return false;
+}
+
+// 快速连接探测：尝试连接到指定 IP，测量延迟
+static ConnectionProbeResult probeConnection(const std::string& ipaddr, 
+                                            uint16_t port,
+                                            int timeoutMs = 2000)
+{
+  ConnectionProbeResult result;
+  result.ipaddr = ipaddr;
+  
+  try {
+    auto socket = std::make_shared<SocketCore>();
+    socket->create(AF_UNSPEC);
+    socket->setNonBlockingMode();
+    
+    auto startTime = std::chrono::steady_clock::now();
+    
+    // 尝试连接
+    socket->establishConnection(ipaddr, port, false);
+    
+    // 等待连接完成或超时
+    fd_set writeSet;
+    fd_set exceptSet;
+    FD_ZERO(&writeSet);
+    FD_ZERO(&exceptSet);
+    FD_SET(socket->getSockfd(), &writeSet);
+    FD_SET(socket->getSockfd(), &exceptSet);
+    
+    struct timeval tv;
+    tv.tv_sec = timeoutMs / 1000;
+    tv.tv_usec = (timeoutMs % 1000) * 1000;
+    
+    int selectResult = select(socket->getSockfd() + 1, nullptr, &writeSet, &exceptSet, &tv);
+    
+    if (selectResult > 0 && FD_ISSET(socket->getSockfd(), &writeSet)) {
+      // 检查连接是否真的成功
+      std::string error = socket->getSocketError();
+      if (error.empty()) {
+        auto endTime = std::chrono::steady_clock::now();
+        result.latencyMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+          endTime - startTime).count();
+        result.success = true;
+      }
+    }
+    
+    socket->closeConnection();
+  }
+  catch (...) {
+    // 连接失败
+  }
+  
+  return result;
+}
 
 InitiateConnectionCommand::InitiateConnectionCommand(
     cuid_t cuid, const std::shared_ptr<Request>& req,
@@ -96,15 +225,99 @@ bool InitiateConnectionCommand::executeInternal()
                     getRequest()->getHost().c_str(), getRequest()->getPort()));
   }
   
-  std::vector<std::string> addrs;
-  std::string ipaddr = resolveHostname(addrs, hostname, port);
+  // 步骤 1: 使用系统 DNS 解析主机名
+  std::vector<std::string> allAddrs;
+  std::string ipaddr = resolveHostname(allAddrs, hostname, port);
   if (ipaddr.empty()) {
     addCommandSelf();
     return false;
   }
   
+  A2_LOG_INFO(fmt("CUID#%" PRId64 " - DNS resolved %zu addresses for %s",
+                  getCuid(), allAddrs.size(), hostname.c_str()));
+  
+  // 步骤 2: IP 合法性过滤
+  std::vector<std::string> validAddrs;
+  for (const auto& addr : allAddrs) {
+    if (isValidPublicIP(addr)) {
+      validAddrs.push_back(addr);
+      A2_LOG_DEBUG(fmt("CUID#%" PRId64 " - Valid IP: %s",
+                       getCuid(), addr.c_str()));
+    } else {
+      A2_LOG_DEBUG(fmt("CUID#%" PRId64 " - Filtered out private/reserved IP: %s",
+                       getCuid(), addr.c_str()));
+    }
+  }
+  
+  // 如果所有 IP 都被过滤了，使用原始列表（可能是内网环境）
+  if (validAddrs.empty()) {
+    A2_LOG_INFO(fmt("CUID#%" PRId64 " - All IPs filtered, using original list",
+                    getCuid()));
+    validAddrs = allAddrs;
+  }
+  
+  // 步骤 3: 快速连接探测（并发）
+  std::string bestIpaddr;
+  
+  if (validAddrs.size() == 1) {
+    // 只有一个 IP，直接使用
+    bestIpaddr = validAddrs[0];
+    A2_LOG_INFO(fmt("CUID#%" PRId64 " - Only one IP available: %s",
+                    getCuid(), bestIpaddr.c_str()));
+  } else {
+    // 多个 IP，进行并发探测
+    A2_LOG_INFO(fmt("CUID#%" PRId64 " - Probing %zu IPs concurrently",
+                    getCuid(), validAddrs.size()));
+    
+    std::vector<std::future<ConnectionProbeResult>> futures;
+    
+    // 启动并发探测
+    for (const auto& addr : validAddrs) {
+      futures.push_back(std::async(std::launch::async, probeConnection, addr, port, 2000));
+    }
+    
+    // 收集结果
+    std::vector<ConnectionProbeResult> results;
+    for (auto& future : futures) {
+      try {
+        results.push_back(future.get());
+      } catch (...) {
+        // 忽略异常
+      }
+    }
+    
+    // 步骤 4: 选择最快的通道
+    ConnectionProbeResult* bestResult = nullptr;
+    for (auto& result : results) {
+      if (result.success) {
+        if (!bestResult || result.latencyMs < bestResult->latencyMs) {
+          bestResult = &result;
+        }
+        A2_LOG_INFO(fmt("CUID#%" PRId64 " - IP %s: latency %lld ms",
+                        getCuid(), result.ipaddr.c_str(), 
+                        static_cast<long long>(result.latencyMs)));
+      } else {
+        A2_LOG_DEBUG(fmt("CUID#%" PRId64 " - IP %s: probe failed",
+                         getCuid(), result.ipaddr.c_str()));
+      }
+    }
+    
+    if (bestResult) {
+      bestIpaddr = bestResult->ipaddr;
+      A2_LOG_INFO(fmt("CUID#%" PRId64 " - Selected fastest IP: %s (latency: %lld ms)",
+                      getCuid(), bestIpaddr.c_str(), 
+                      static_cast<long long>(bestResult->latencyMs)));
+    } else {
+      // 所有探测都失败，使用第一个 IP
+      bestIpaddr = validAddrs[0];
+      A2_LOG_INFO(fmt("CUID#%" PRId64 " - All probes failed, using first IP: %s",
+                      getCuid(), bestIpaddr.c_str()));
+    }
+  }
+  
+  // 步骤 5: 使用选定的最快 IP 进行正式下载
   try {
-    auto c = createNextCommand(hostname, ipaddr, port, addrs, proxyRequest);
+    auto c = createNextCommand(hostname, bestIpaddr, port, validAddrs, proxyRequest);
     c->setStatus(Command::STATUS_ONESHOT_REALTIME);
     getDownloadEngine()->setNoWait(true);
     getDownloadEngine()->addCommand(std::move(c));
@@ -115,11 +328,11 @@ bool InitiateConnectionCommand::executeInternal()
     // See also AbstractCommand::checkIfConnectionEstablished
 
     // TODO ipaddr might not be used if pooled socket was found.
-    getDownloadEngine()->markBadIPAddress(hostname, ipaddr, port);
+    getDownloadEngine()->markBadIPAddress(hostname, bestIpaddr, port);
     if (!getDownloadEngine()->findCachedIPAddress(hostname, port).empty()) {
       A2_LOG_INFO_EX(EX_EXCEPTION_CAUGHT, ex);
       A2_LOG_INFO(
-          fmt(MSG_CONNECT_FAILED_AND_RETRY, getCuid(), ipaddr.c_str(), port));
+          fmt(MSG_CONNECT_FAILED_AND_RETRY, getCuid(), bestIpaddr.c_str(), port));
       auto command =
           InitiateConnectionCommandFactory::createInitiateConnectionCommand(
               getCuid(), getRequest(), getFileEntry(), getRequestGroup(),
