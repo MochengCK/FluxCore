@@ -34,13 +34,17 @@
 /* copyright --> */
 #ifndef D_MULTI_MIRROR_URI_SELECTOR_H
 #define D_MULTI_MIRROR_URI_SELECTOR_H
+#include "common.h"
 #include "URISelector.h"
 
 #include <memory>
 #include <map>
 #include <set>
+#include <cstdint>
 
 namespace aria2 {
+
+typedef int64_t cuid_t;
 
 class ServerStatMan;
 class RequestGroup;
