@@ -115,9 +115,12 @@ private:
   // Dynamic segmentation constants
   static constexpr int64_t DYNAMIC_MIN_SPLIT_SIZE = 256 * 1024;      // 256KB
   static constexpr int64_t DYNAMIC_MAX_SPLIT_SIZE = 16 * 1024 * 1024; // 16MB
+  static constexpr int64_t ENDGAME_MIN_SPLIT_SIZE = 128 * 1024;      // 128KB (末尾加速)
   static constexpr double SLOW_CONNECTION_THRESHOLD = 0.3;             // 30%
   static constexpr double PREEMPTION_PROGRESS_THRESHOLD = 0.85;        // 85%
+  static constexpr double ENDGAME_PROGRESS_THRESHOLD = 0.90;           // 90% (末尾加速触发)
   static constexpr int SCHEDULE_INTERVAL_SEC = 1;                      // 1 second
+  static constexpr int ENDGAME_SCHEDULE_INTERVAL_MS = 500;            // 0.5 second (末尾加速调度)
 
   std::shared_ptr<Segment> checkoutSegment(cuid_t cuid,
                                            const std::shared_ptr<Piece>& piece);
@@ -263,6 +266,8 @@ public:
   cuid_t findBestConnection(cuid_t excludeCuid = 0) const;
   double calculateAverageSpeed() const;
   double getDownloadProgress() const;
+  bool isEndgameMode() const;
+  void forceReallocateAllSlowSegments();
 };
 
 } // namespace aria2

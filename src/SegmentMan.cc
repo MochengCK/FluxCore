@@ -565,13 +565,31 @@ int64_t SegmentMan::getDynamicSegmentSize() const
   
   int64_t segmentSize;
   
-  if (progress > PREEMPTION_PROGRESS_THRESHOLD) {
-    // Near completion, use smaller segments to better utilize all connections
-    segmentSize = std::max(totalRemaining / (activeConnections * 2), 
+  // 末尾加速模式：进度 > 90%
+  if (progress > ENDGAME_PROGRESS_THRESHOLD) {
+    // 使用更小的分段，提高并发度
+    // 每个连接分配更多更小的段，确保所有连接都能参与
+    segmentSize = totalRemaining / (activeConnections * 8);
+    
+    // 使用更小的最小分段大小
+    if (segmentSize < ENDGAME_MIN_SPLIT_SIZE) {
+      segmentSize = ENDGAME_MIN_SPLIT_SIZE;
+    } else if (segmentSize > DYNAMIC_MIN_SPLIT_SIZE) {
+      segmentSize = DYNAMIC_MIN_SPLIT_SIZE;
+    }
+    
+    A2_LOG_DEBUG(fmt("ENDGAME MODE: progress=%.1f%%, segmentSize=%" PRId64 ", activeConn=%d",
+                     progress * 100, segmentSize, activeConnections));
+  }
+  // 接近完成模式：进度 > 85%
+  else if (progress > PREEMPTION_PROGRESS_THRESHOLD) {
+    // 使用较小的分段
+    segmentSize = std::max(totalRemaining / (activeConnections * 4), 
                           DYNAMIC_MIN_SPLIT_SIZE);
-  } else {
-    // Normal download, use standard segments
-    // Allocate ~4 segments per connection for scheduling flexibility
+  } 
+  // 正常下载模式
+  else {
+    // 使用标准分段
     segmentSize = totalRemaining / (activeConnections * 4);
     // Manual clamp for C++11/14 compatibility
     if (segmentSize < DYNAMIC_MIN_SPLIT_SIZE) {
@@ -588,13 +606,23 @@ void SegmentMan::scheduleSegments()
 {
   auto now = std::chrono::steady_clock::now();
   
+  // 末尾加速模式：更频繁的调度（每0.5秒）
+  bool endgameMode = isEndgameMode();
+  int64_t scheduleIntervalMs = endgameMode ? ENDGAME_SCHEDULE_INTERVAL_MS : (SCHEDULE_INTERVAL_SEC * 1000);
+  
   // Check schedule interval
-  if (std::chrono::duration_cast<std::chrono::seconds>(
-        now - lastScheduleTime_).count() < SCHEDULE_INTERVAL_SEC) {
+  if (std::chrono::duration_cast<std::chrono::milliseconds>(
+        now - lastScheduleTime_).count() < scheduleIntervalMs) {
     return;
   }
   
   lastScheduleTime_ = now;
+  
+  if (endgameMode) {
+    A2_LOG_DEBUG("ENDGAME MODE: Aggressive scheduling active");
+    // 末尾加速：强制重新分配所有慢速连接
+    forceReallocateAllSlowSegments();
+  }
   
   // Find slow connections that need reallocation
   std::vector<cuid_t> slowConnections;
@@ -605,11 +633,17 @@ void SegmentMan::scheduleSegments()
   }
   
   // Perform reallocation
+  int reallocatedCount = 0;
   for (cuid_t slowCuid : slowConnections) {
     if (splitAndReallocateSegment(slowCuid)) {
+      reallocatedCount++;
       A2_LOG_INFO(fmt("Reallocated segment from slow connection CUID#%" PRId64, 
                       slowCuid));
     }
+  }
+  
+  if (endgameMode && reallocatedCount > 0) {
+    A2_LOG_INFO(fmt("ENDGAME MODE: Reallocated %d segments", reallocatedCount));
   }
 }
 
@@ -622,8 +656,13 @@ bool SegmentMan::shouldReallocateSegment(cuid_t cuid) const
   
   const auto& stats = it->second;
   
-  // Not worth reallocating if remaining is too small
-  if (stats.remainingBytes < DYNAMIC_MIN_SPLIT_SIZE * 2) {
+  // 末尾加速模式：更激进的重新分配策略
+  bool endgameMode = isEndgameMode();
+  
+  // 在末尾加速模式下，即使是较小的数据也值得重新分配
+  int64_t minRemainingThreshold = endgameMode ? ENDGAME_MIN_SPLIT_SIZE : (DYNAMIC_MIN_SPLIT_SIZE * 2);
+  
+  if (stats.remainingBytes < minRemainingThreshold) {
     return false;
   }
   
@@ -634,14 +673,23 @@ bool SegmentMan::shouldReallocateSegment(cuid_t cuid) const
   
   double progress = getDownloadProgress();
   
-  // Condition 1: Speed too slow (below 30% of average)
-  if (stats.currentSpeed < avgSpeed * SLOW_CONNECTION_THRESHOLD) {
+  // 末尾加速模式：更宽松的慢速判断标准
+  double slowThreshold = endgameMode ? (SLOW_CONNECTION_THRESHOLD * 1.5) : SLOW_CONNECTION_THRESHOLD;
+  
+  // Condition 1: Speed too slow
+  if (stats.currentSpeed < avgSpeed * slowThreshold) {
+    if (endgameMode) {
+      A2_LOG_DEBUG(fmt("ENDGAME: CUID#%" PRId64 " is slow: %.1f KB/s < %.1f KB/s * %.2f",
+                       cuid, stats.currentSpeed / 1024.0, avgSpeed / 1024.0, slowThreshold));
+    }
     return true;
   }
   
   // Condition 2: Near completion and slow (progress > 85% and speed < 100KB/s)
+  // 在末尾加速模式下，速度阈值提高到 200KB/s
+  int64_t speedThreshold = endgameMode ? (200 * 1024) : (100 * 1024);
   if (progress > PREEMPTION_PROGRESS_THRESHOLD && 
-      stats.currentSpeed < 100 * 1024) {
+      stats.currentSpeed < speedThreshold) {
     return true;
   }
   
@@ -657,7 +705,9 @@ bool SegmentMan::shouldReallocateSegment(cuid_t cuid) const
   
   if (activeCount > 1) {
     int64_t avgRemaining = totalRemaining / activeCount;
-    if (stats.remainingBytes > avgRemaining * 3) {
+    // 末尾加速模式：更激进的负载均衡（2倍而不是3倍）
+    int multiplier = endgameMode ? 2 : 3;
+    if (stats.remainingBytes > avgRemaining * multiplier) {
       return true;
     }
   }
@@ -776,6 +826,95 @@ double SegmentMan::getDownloadProgress() const
   
   int64_t downloaded = getDownloadLength();
   return static_cast<double>(downloaded) / total;
+}
+
+bool SegmentMan::isEndgameMode() const
+{
+  double progress = getDownloadProgress();
+  return progress > ENDGAME_PROGRESS_THRESHOLD;
+}
+
+void SegmentMan::forceReallocateAllSlowSegments()
+{
+  // 末尾加速模式：更激进的重新分配策略
+  // 找出所有慢速连接并强制重新分配
+  
+  double avgSpeed = calculateAverageSpeed();
+  if (avgSpeed <= 0) {
+    return;
+  }
+  
+  // 在末尾加速模式下，使用更宽松的慢速判断标准（45%而不是30%）
+  double slowThreshold = SLOW_CONNECTION_THRESHOLD * 1.5;  // 45%
+  
+  std::vector<cuid_t> slowConnections;
+  
+  for (const auto& pair : connectionStats_) {
+    const auto& stats = pair.second;
+    
+    // 跳过空闲连接
+    if (stats.isIdle) {
+      continue;
+    }
+    
+    // 剩余数据太少，不值得重新分配
+    if (stats.remainingBytes < ENDGAME_MIN_SPLIT_SIZE) {
+      continue;
+    }
+    
+    // 判断是否为慢速连接
+    bool isSlow = false;
+    
+    // 条件1：速度低于平均速度的45%
+    if (stats.currentSpeed < avgSpeed * slowThreshold) {
+      isSlow = true;
+      A2_LOG_DEBUG(fmt("ENDGAME: CUID#%" PRId64 " is slow (speed): %.1f KB/s < %.1f KB/s * %.2f",
+                       pair.first, stats.currentSpeed / 1024.0, avgSpeed / 1024.0, slowThreshold));
+    }
+    
+    // 条件2：速度低于200KB/s（末尾加速阈值）
+    if (stats.currentSpeed < 200 * 1024) {
+      isSlow = true;
+      A2_LOG_DEBUG(fmt("ENDGAME: CUID#%" PRId64 " is slow (threshold): %.1f KB/s < 200 KB/s",
+                       pair.first, stats.currentSpeed / 1024.0));
+    }
+    
+    // 条件3：剩余数据量远超平均值（2倍而不是3倍）
+    int64_t totalRemaining = 0;
+    int activeCount = 0;
+    for (const auto& p : connectionStats_) {
+      if (!p.second.isIdle) {
+        totalRemaining += p.second.remainingBytes;
+        activeCount++;
+      }
+    }
+    
+    if (activeCount > 1) {
+      int64_t avgRemaining = totalRemaining / activeCount;
+      if (stats.remainingBytes > avgRemaining * 2) {
+        isSlow = true;
+        A2_LOG_DEBUG(fmt("ENDGAME: CUID#%" PRId64 " has too much remaining: %" PRId64 " > %" PRId64 " * 2",
+                         pair.first, stats.remainingBytes, avgRemaining));
+      }
+    }
+    
+    if (isSlow) {
+      slowConnections.push_back(pair.first);
+    }
+  }
+  
+  // 对所有慢速连接执行重新分配
+  int reallocatedCount = 0;
+  for (cuid_t slowCuid : slowConnections) {
+    if (splitAndReallocateSegment(slowCuid)) {
+      reallocatedCount++;
+      A2_LOG_INFO(fmt("ENDGAME: Force reallocated segment from CUID#%" PRId64, slowCuid));
+    }
+  }
+  
+  if (reallocatedCount > 0) {
+    A2_LOG_INFO(fmt("ENDGAME: Force reallocated %d segments in total", reallocatedCount));
+  }
 }
 
 } // namespace aria2
