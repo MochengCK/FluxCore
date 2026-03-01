@@ -280,6 +280,7 @@ void DefaultBtAnnounce::announceFailure()
   if (!currentTrackerUrl_.empty()) {
     TrackerStats& stats = trackerStatsMap_[currentTrackerUrl_];
     stats.status = "not-working";
+    stats.downloadCount++;  // 增加连接次数
   }
   announceList_.announceFailure();
 }
@@ -349,6 +350,10 @@ void DefaultBtAnnounce::processAnnounceResponse(
     stats.seeders = complete_;
     stats.leechers = incomplete_;
     stats.status = "working";
+    stats.downloadCount++;  // 增加连接次数
+    // 计算下次连接时间
+    stats.nextAnnounceTime = std::chrono::system_clock::now() + 
+                             std::chrono::duration_cast<std::chrono::system_clock::duration>(minInterval_);
   }
   auto peerData = dict->get(BtAnnounce::PEERS);
   if (!peerData) {
@@ -394,6 +399,10 @@ void DefaultBtAnnounce::processUDPTrackerResponse(
     stats.seeders = complete_;
     stats.leechers = incomplete_;
     stats.status = "working";
+    stats.downloadCount++;  // 增加连接次数
+    // 计算下次连接时间
+    stats.nextAnnounceTime = std::chrono::system_clock::now() + 
+                             std::chrono::duration_cast<std::chrono::system_clock::duration>(minInterval_);
   }
   if (!btRuntime_->isHalt() && btRuntime_->lessThanMinPeers()) {
     for (auto& elem : reply->peers) {

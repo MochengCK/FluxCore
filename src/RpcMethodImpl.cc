@@ -1694,11 +1694,20 @@ std::unique_ptr<ValueBase> GetTrackersRpcMethod::process(const RpcRequest& req,
         trackerEntry->put("peers", Integer::g(currentPeers));
         trackerEntry->put("seeders", Integer::g(it->second.seeders));
         trackerEntry->put("leechers", Integer::g(it->second.leechers));
+        trackerEntry->put("downloadCount", Integer::g(it->second.downloadCount));
+        
+        // 转换下次连接时间为时间戳（秒）
+        auto nextTime = it->second.nextAnnounceTime;
+        auto epoch = nextTime.time_since_epoch();
+        auto seconds = std::chrono::duration_cast<std::chrono::seconds>(epoch).count();
+        trackerEntry->put("nextAnnounceTime", Integer::g(seconds));
       } else {
         trackerEntry->put("status", "pending");
         trackerEntry->put("peers", Integer::g(0));
         trackerEntry->put("seeders", Integer::g(0));
         trackerEntry->put("leechers", Integer::g(0));
+        trackerEntry->put("downloadCount", Integer::g(0));
+        trackerEntry->put("nextAnnounceTime", Integer::g(0));
       }
 
       result->append(std::move(trackerEntry));
