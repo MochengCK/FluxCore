@@ -303,11 +303,21 @@ void DefaultBtAnnounce::processAnnounceResponse(
   auto decodedValue = bencode2::decode(trackerResponse, trackerResponseLength);
   const Dict* dict = downcast<Dict>(decodedValue);
   if (!dict) {
+    // 记录失败原因
+    if (!currentTrackerUrl_.empty()) {
+      TrackerStats& stats = trackerStatsMap_[currentTrackerUrl_];
+      stats.failureReason = MSG_NULL_TRACKER_RESPONSE;
+    }
     throw DL_ABORT_EX(MSG_NULL_TRACKER_RESPONSE);
   }
   const String* failure =
       downcast<String>(dict->get(BtAnnounce::FAILURE_REASON));
   if (failure) {
+    // 记录失败原因
+    if (!currentTrackerUrl_.empty()) {
+      TrackerStats& stats = trackerStatsMap_[currentTrackerUrl_];
+      stats.failureReason = failure->s();
+    }
     throw DL_ABORT_EX(fmt(EX_TRACKER_FAILURE, failure->s().c_str()));
   }
   const String* warn = downcast<String>(dict->get(BtAnnounce::WARNING_MESSAGE));
@@ -350,6 +360,7 @@ void DefaultBtAnnounce::processAnnounceResponse(
     stats.seeders = complete_;
     stats.leechers = incomplete_;
     stats.status = "working";
+    stats.failureReason = "";  // 清除失败原因
     stats.downloadCount++;  // 增加连接次数
     // 计算下次连接时间
     stats.nextAnnounceTime = std::chrono::system_clock::now() + 
@@ -399,6 +410,7 @@ void DefaultBtAnnounce::processUDPTrackerResponse(
     stats.seeders = complete_;
     stats.leechers = incomplete_;
     stats.status = "working";
+    stats.failureReason = "";  // 清除失败原因
     stats.downloadCount++;  // 增加连接次数
     // 计算下次连接时间
     stats.nextAnnounceTime = std::chrono::system_clock::now() + 
