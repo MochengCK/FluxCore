@@ -81,6 +81,7 @@
 #  include "Peer.h"
 #  include "BtRuntime.h"
 #  include "BtAnnounce.h"
+#  include "DefaultBtAnnounce.h"
 #  include "wallclock.h"
 #endif // ENABLE_BITTORRENT
 #include "CheckIntegrityEntry.h"
@@ -1665,9 +1666,10 @@ std::unique_ptr<ValueBase> GetTrackersRpcMethod::process(const RpcRequest& req,
   int currentPeers = 0;
   std::string currentTrackerStatus = "unknown";
 
-  if (btObject->btAnnounce) {
-    currentSeeders = btObject->btAnnounce->getComplete();
-    currentLeechers = btObject->btAnnounce->getIncomplete();
+  auto defaultBtAnnounce = std::dynamic_pointer_cast<DefaultBtAnnounce>(btObject->btAnnounce);
+  if (defaultBtAnnounce) {
+    currentSeeders = defaultBtAnnounce->getComplete();
+    currentLeechers = defaultBtAnnounce->getIncomplete();
     currentTrackerStatus = "working";
   }
 
