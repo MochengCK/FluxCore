@@ -1695,7 +1695,6 @@ std::unique_ptr<ValueBase> GetTrackersRpcMethod::process(const RpcRequest& req,
         trackerEntry->put("seeders", Integer::g(it->second.seeders));
         trackerEntry->put("leechers", Integer::g(it->second.leechers));
         trackerEntry->put("downloadCount", Integer::g(it->second.downloadCount));
-        trackerEntry->put("failureReason", it->second.failureReason);
         
         // 转换下次连接时间为时间戳（秒）
         auto nextTime = it->second.nextAnnounceTime;
@@ -1708,7 +1707,6 @@ std::unique_ptr<ValueBase> GetTrackersRpcMethod::process(const RpcRequest& req,
         trackerEntry->put("seeders", Integer::g(0));
         trackerEntry->put("leechers", Integer::g(0));
         trackerEntry->put("downloadCount", Integer::g(0));
-        trackerEntry->put("failureReason", "");
         trackerEntry->put("nextAnnounceTime", Integer::g(0));
       }
 
