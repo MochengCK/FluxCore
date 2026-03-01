@@ -1660,7 +1660,24 @@ std::unique_ptr<ValueBase> GetTrackersRpcMethod::process(const RpcRequest& req,
 
   auto result = List::g();
 
+  int currentSeeders = 0;
+  int currentLeechers = 0;
+  int currentPeers = 0;
+  std::string currentTrackerStatus = "unknown";
+
+  if (btObject->btAnnounce) {
+    currentSeeders = btObject->btAnnounce->getComplete();
+    currentLeechers = btObject->btAnnounce->getIncomplete();
+    currentTrackerStatus = "working";
+  }
+
+  if (btObject->peerStorage) {
+    auto& usedPeers = btObject->peerStorage->getUsedPeers();
+    currentPeers = static_cast<int>(usedPeers.size());
+  }
+
   const auto& announceList = torrentAttrs->announceList;
+  bool isFirst = true;
   for (const auto& tier : announceList) {
     for (const auto& url : tier) {
       auto trackerEntry = Dict::g();
@@ -1678,10 +1695,18 @@ std::unique_ptr<ValueBase> GetTrackersRpcMethod::process(const RpcRequest& req,
       }
       trackerEntry->put("protocol", protocol);
 
-      trackerEntry->put("status", "unknown");
-      trackerEntry->put("peers", Integer::g(0));
-      trackerEntry->put("seeders", Integer::g(0));
-      trackerEntry->put("leechers", Integer::g(0));
+      if (isFirst) {
+        trackerEntry->put("status", currentTrackerStatus);
+        trackerEntry->put("peers", Integer::g(currentPeers));
+        trackerEntry->put("seeders", Integer::g(currentSeeders));
+        trackerEntry->put("leechers", Integer::g(currentLeechers));
+        isFirst = false;
+      } else {
+        trackerEntry->put("status", "pending");
+        trackerEntry->put("peers", Integer::g(0));
+        trackerEntry->put("seeders", Integer::g(0));
+        trackerEntry->put("leechers", Integer::g(0));
+      }
 
       result->append(std::move(trackerEntry));
     }
