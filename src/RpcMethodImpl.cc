@@ -1661,25 +1661,16 @@ std::unique_ptr<ValueBase> GetTrackersRpcMethod::process(const RpcRequest& req,
 
   auto result = List::g();
 
-  int currentSeeders = 0;
-  int currentLeechers = 0;
   int currentPeers = 0;
-  std::string currentTrackerStatus = "unknown";
-
-  auto defaultBtAnnounce = std::dynamic_pointer_cast<DefaultBtAnnounce>(btObject->btAnnounce);
-  if (defaultBtAnnounce) {
-    currentSeeders = defaultBtAnnounce->getComplete();
-    currentLeechers = defaultBtAnnounce->getIncomplete();
-    currentTrackerStatus = "working";
-  }
-
   if (btObject->peerStorage) {
     auto& usedPeers = btObject->peerStorage->getUsedPeers();
     currentPeers = static_cast<int>(usedPeers.size());
   }
 
+  auto defaultBtAnnounce = std::dynamic_pointer_cast<DefaultBtAnnounce>(btObject->btAnnounce);
+  const auto& trackerStatsMap = defaultBtAnnounce ? defaultBtAnnounce->getTrackerStatsMap() : std::map<std::string, TrackerStats>();
+
   const auto& announceList = torrentAttrs->announceList;
-  bool isFirst = true;
   for (const auto& tier : announceList) {
     for (const auto& url : tier) {
       auto trackerEntry = Dict::g();
@@ -1697,12 +1688,12 @@ std::unique_ptr<ValueBase> GetTrackersRpcMethod::process(const RpcRequest& req,
       }
       trackerEntry->put("protocol", protocol);
 
-      if (isFirst) {
-        trackerEntry->put("status", currentTrackerStatus);
+      auto it = trackerStatsMap.find(url);
+      if (it != trackerStatsMap.end()) {
+        trackerEntry->put("status", it->second.status);
         trackerEntry->put("peers", Integer::g(currentPeers));
-        trackerEntry->put("seeders", Integer::g(currentSeeders));
-        trackerEntry->put("leechers", Integer::g(currentLeechers));
-        isFirst = false;
+        trackerEntry->put("seeders", Integer::g(it->second.seeders));
+        trackerEntry->put("leechers", Integer::g(it->second.leechers));
       } else {
         trackerEntry->put("status", "pending");
         trackerEntry->put("peers", Integer::g(0));

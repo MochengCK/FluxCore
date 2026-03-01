@@ -263,7 +263,10 @@ std::shared_ptr<UDPTrackerRequest> DefaultBtAnnounce::createUDPTrackerRequest(
   return req;
 }
 
-void DefaultBtAnnounce::announceStart() { ++trackers_; }
+void DefaultBtAnnounce::announceStart() { 
+  ++trackers_; 
+  currentTrackerUrl_ = announceList_.getAnnounce();
+}
 
 void DefaultBtAnnounce::announceSuccess()
 {
@@ -274,6 +277,10 @@ void DefaultBtAnnounce::announceSuccess()
 void DefaultBtAnnounce::announceFailure()
 {
   trackers_ = 0;
+  if (!currentTrackerUrl_.empty()) {
+    TrackerStats& stats = trackerStatsMap_[currentTrackerUrl_];
+    stats.status = "not-working";
+  }
   announceList_.announceFailure();
 }
 
@@ -337,6 +344,12 @@ void DefaultBtAnnounce::processAnnounceResponse(
     incomplete_ = incomp->i();
     A2_LOG_DEBUG(fmt("Incomplete:%d", incomplete_));
   }
+  if (!currentTrackerUrl_.empty()) {
+    TrackerStats& stats = trackerStatsMap_[currentTrackerUrl_];
+    stats.seeders = complete_;
+    stats.leechers = incomplete_;
+    stats.status = "working";
+  }
   auto peerData = dict->get(BtAnnounce::PEERS);
   if (!peerData) {
     A2_LOG_INFO(MSG_NO_PEER_LIST_RECEIVED);
@@ -376,6 +389,12 @@ void DefaultBtAnnounce::processUDPTrackerResponse(
   A2_LOG_DEBUG(fmt("Complete:%d", reply->seeders));
   incomplete_ = reply->leechers;
   A2_LOG_DEBUG(fmt("Incomplete:%d", reply->leechers));
+  if (!currentTrackerUrl_.empty()) {
+    TrackerStats& stats = trackerStatsMap_[currentTrackerUrl_];
+    stats.seeders = complete_;
+    stats.leechers = incomplete_;
+    stats.status = "working";
+  }
   if (!btRuntime_->isHalt() && btRuntime_->lessThanMinPeers()) {
     for (auto& elem : reply->peers) {
       peerStorage_->addPeer(std::make_shared<Peer>(elem.first, elem.second));

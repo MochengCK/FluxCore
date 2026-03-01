@@ -38,8 +38,16 @@
 #include "BtAnnounce.h"
 #include "TimerA2.h"
 #include "AnnounceList.h"
+#include <map>
 
 namespace aria2 {
+
+struct TrackerStats {
+  int seeders;
+  int leechers;
+  std::string status;
+  TrackerStats() : seeders(0), leechers(0), status("unknown") {}
+};
 
 class DownloadContext;
 class Option;
@@ -58,6 +66,8 @@ private:
   std::chrono::seconds userDefinedInterval_;
   int complete_;
   int incomplete_;
+  std::string currentTrackerUrl_;
+  std::map<std::string, TrackerStats> trackerStatsMap_;
   AnnounceList announceList_;
   std::string trackerId_;
   const Option* option_;
@@ -141,6 +151,8 @@ public:
   int getComplete() const { return complete_; }
 
   int getIncomplete() const { return incomplete_; }
+
+  const std::map<std::string, TrackerStats>& getTrackerStatsMap() const { return trackerStatsMap_; }
 
   const std::string& getTrackerID() const { return trackerId_; }
 
