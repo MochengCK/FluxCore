@@ -147,6 +147,10 @@ std::unique_ptr<RpcMethod> createMethod(const std::string& methodName)
   if (methodName == SetBtStatisticsRpcMethod::getMethodName()) {
     return make_unique<SetBtStatisticsRpcMethod>();
   }
+
+  if (methodName == GetTrackersRpcMethod::getMethodName()) {
+    return make_unique<GetTrackersRpcMethod>();
+  }
 #endif // ENABLE_BITTORRENT
 
 #ifdef ENABLE_METALINK

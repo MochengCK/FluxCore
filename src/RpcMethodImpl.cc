@@ -1635,6 +1635,60 @@ std::unique_ptr<ValueBase> UnbanPeerRpcMethod::process(const RpcRequest& req,
   result->put("ip", ip);
   return std::move(result);
 }
+
+std::unique_ptr<ValueBase> GetTrackersRpcMethod::process(const RpcRequest& req,
+                                                         DownloadEngine* e)
+{
+  const String* gidParam = checkRequiredParam<String>(req, 0);
+
+  a2_gid_t gid = str2Gid(gidParam);
+  auto group = e->getRequestGroupMan()->findGroup(gid);
+  if (!group) {
+    throw DL_ABORT_EX(fmt("No such download for GID#%s",
+                          GroupId::toHex(gid).c_str()));
+  }
+
+  auto btObject = e->getBtRegistry()->get(group->getGID());
+  if (!btObject) {
+    return List::g();
+  }
+
+  auto torrentAttrs = bittorrent::getTorrentAttrs(group->getDownloadContext());
+  if (!torrentAttrs) {
+    return List::g();
+  }
+
+  auto result = List::g();
+
+  const auto& announceList = torrentAttrs->announceList;
+  for (const auto& tier : announceList) {
+    for (const auto& url : tier) {
+      auto trackerEntry = Dict::g();
+      trackerEntry->put("url", url);
+
+      std::string protocol = "unknown";
+      if (url.find("udp://") == 0) {
+        protocol = "UDP";
+      } else if (url.find("http://") == 0) {
+        protocol = "HTTP";
+      } else if (url.find("https://") == 0) {
+        protocol = "HTTPS";
+      } else if (url.find("wss://") == 0) {
+        protocol = "WSS";
+      }
+      trackerEntry->put("protocol", protocol);
+
+      trackerEntry->put("status", "unknown");
+      trackerEntry->put("peers", Integer::g(0));
+      trackerEntry->put("seeders", Integer::g(0));
+      trackerEntry->put("leechers", Integer::g(0));
+
+      result->append(std::move(trackerEntry));
+    }
+  }
+
+  return std::move(result);
+}
 #endif // ENABLE_BITTORRENT
 
 std::unique_ptr<ValueBase> TellStatusRpcMethod::process(const RpcRequest& req,
