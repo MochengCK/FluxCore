@@ -797,10 +797,12 @@ int64_t BitfieldMan::getFilteredTotalLengthNow() const
     return 0;
   }
   if (bitfield::test(filterBitfield_, blocks_, blocks_ - 1)) {
-    return ((int64_t)filteredBlocks - 1) * blockLength_ + getLastBlockLength();
+    // 修复：确保使用int64_t进行乘法运算，避免溢出
+    return ((int64_t)filteredBlocks - 1) * (int64_t)blockLength_ + (int64_t)getLastBlockLength();
   }
   else {
-    return ((int64_t)filteredBlocks) * blockLength_;
+    // 修复：确保使用int64_t进行乘法运算，避免溢出
+    return ((int64_t)filteredBlocks) * (int64_t)blockLength_;
   }
 }
 
