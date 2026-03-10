@@ -135,7 +135,15 @@ BitfieldMan::~BitfieldMan()
 
 int32_t BitfieldMan::getLastBlockLength() const
 {
-  return totalLength_ - blockLength_ * (blocks_ - 1);
+  // 修复：确保计算不会溢出
+  // totalLength_ - blockLength_ * (blocks_ - 1)
+  // 当blocks_很大时，blockLength_ * (blocks_ - 1)可能溢出int32_t
+  int64_t lastLength = totalLength_ - (int64_t)blockLength_ * (blocks_ - 1);
+  // 最后一块的长度不应该超过blockLength_
+  if (lastLength > blockLength_ || lastLength < 0) {
+    return blockLength_;
+  }
+  return static_cast<int32_t>(lastLength);
 }
 
 int32_t BitfieldMan::getBlockLength(size_t index) const
@@ -808,13 +816,15 @@ int64_t computeCompletedLength(const Array& bitfield, const BitfieldMan* btman,
     completedLength = 0;
   }
   else {
+    // 修复：确保使用int64_t进行乘法运算，避免溢出
+    // 当文件大于2GB时，blockLength是int32_t，可能导致溢出
     if (bitfield::test(bitfield, nbits, nbits - 1)) {
       completedLength =
-          ((int64_t)completedBlocks - 1) * btman->getBlockLength() +
-          btman->getLastBlockLength();
+          ((int64_t)completedBlocks - 1) * (int64_t)btman->getBlockLength() +
+          (int64_t)btman->getLastBlockLength();
     }
     else {
-      completedLength = ((int64_t)completedBlocks) * btman->getBlockLength();
+      completedLength = ((int64_t)completedBlocks) * (int64_t)btman->getBlockLength();
     }
   }
   return completedLength;
@@ -918,15 +928,18 @@ int64_t BitfieldMan::getOffsetCompletedLength(int64_t offset,
   }
   else {
     if (isBitSet(start)) {
-      res += static_cast<int64_t>(start + 1) * blockLength_ - offset;
+      // 修复：确保使用int64_t进行乘法运算，避免溢出
+      res += static_cast<int64_t>(start + 1) * (int64_t)blockLength_ - offset;
     }
     for (size_t i = start + 1; i <= end - 1; ++i) {
       if (isBitSet(i)) {
-        res += blockLength_;
+        // 修复：确保使用int64_t，避免溢出
+        res += (int64_t)blockLength_;
       }
     }
     if (isBitSet(end)) {
-      res += offset + length - static_cast<int64_t>(end) * blockLength_;
+      // 修复：确保使用int64_t进行乘法运算，避免溢出
+      res += offset + length - static_cast<int64_t>(end) * (int64_t)blockLength_;
     }
   }
   return res;
