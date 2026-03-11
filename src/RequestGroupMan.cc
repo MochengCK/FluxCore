@@ -525,9 +525,45 @@ void RequestGroupMan::fillRequestGroupFromReserver(DownloadEngine* e)
                                    ? optimizeConcurrentDownloads()
                                    : maxConcurrentDownloads_;
 
-  if (static_cast<size_t>(maxConcurrentDownloads) <= numActive_) {
+  // 改进的并发控制：区分 BT 任务和 HTTP 任务
+  // BT 任务通常会占用大量连接，但不应该阻止 HTTP 任务启动
+  size_t numBtActive = 0;
+  size_t numHttpActive = 0;
+  
+  for (const auto& group : requestGroups_) {
+#ifdef ENABLE_BITTORRENT
+    if (group->getDownloadContext()->hasAttribute(CTX_ATTR_BT)) {
+      ++numBtActive;
+    } else {
+      ++numHttpActive;
+    }
+#else
+    ++numHttpActive;
+#endif
+  }
+  
+  // 为 HTTP 任务保留至少 25% 的并发槽位
+  // 这样即使有大量 BT 任务，HTTP 任务也能启动
+  int minHttpSlots = std::max(2, maxConcurrentDownloads / 4);
+  int maxBtSlots = maxConcurrentDownloads - minHttpSlots;
+  
+  // 检查是否还有可用槽位
+  bool hasHttpSlot = (static_cast<int>(numHttpActive) < maxConcurrentDownloads);
+  bool hasBtSlot = (static_cast<int>(numBtActive) < maxBtSlots);
+  
+  // 如果没有任何可用槽位，直接返回
+  if (!hasHttpSlot && !hasBtSlot) {
+    A2_LOG_DEBUG(fmt("No available slots: HTTP=%zu/%d, BT=%zu/%d",
+                     numHttpActive, maxConcurrentDownloads,
+                     numBtActive, maxBtSlots));
     return;
   }
+  
+  A2_LOG_DEBUG(fmt("Available slots: HTTP=%zu/%d, BT=%zu/%d, total=%zu/%d",
+                   numHttpActive, maxConcurrentDownloads,
+                   numBtActive, maxBtSlots,
+                   numActive_, maxConcurrentDownloads));
+
   int count = 0;
   int num = maxConcurrentDownloads - numActive_;
   std::vector<std::shared_ptr<RequestGroup>> pending;
@@ -550,6 +586,31 @@ void RequestGroupMan::fillRequestGroupFromReserver(DownloadEngine* e)
     }
     std::shared_ptr<RequestGroup> groupToAdd = *reservedGroups_.begin();
     reservedGroups_.pop_front();
+    
+    // 检查任务类型并验证是否有可用槽位
+#ifdef ENABLE_BITTORRENT
+    bool isBtTask = groupToAdd->getDownloadContext()->hasAttribute(CTX_ATTR_BT);
+    if (isBtTask && !hasBtSlot) {
+      // BT 任务但没有 BT 槽位，跳过
+      A2_LOG_DEBUG(fmt("Skipping BT task GID#%s: no BT slots available",
+                       GroupId::toHex(groupToAdd->getGID()).c_str()));
+      pending.push_back(groupToAdd);
+      continue;
+    }
+    if (!isBtTask && !hasHttpSlot) {
+      // HTTP 任务但没有 HTTP 槽位，跳过
+      A2_LOG_DEBUG(fmt("Skipping HTTP task GID#%s: no HTTP slots available",
+                       GroupId::toHex(groupToAdd->getGID()).c_str()));
+      pending.push_back(groupToAdd);
+      continue;
+    }
+#else
+    if (!hasHttpSlot) {
+      pending.push_back(groupToAdd);
+      continue;
+    }
+#endif
+    
     if ((keepRunning_ && groupToAdd->isPauseRequested()) ||
         !groupToAdd->isDependencyResolved()) {
       pending.push_back(groupToAdd);
@@ -565,6 +626,21 @@ void RequestGroupMan::fillRequestGroupFromReserver(DownloadEngine* e)
     requestGroups_.push_back(groupToAdd->getGID(), groupToAdd);
     try {
       auto res = createInitialCommand(groupToAdd, e);
+      
+      // 更新槽位计数
+#ifdef ENABLE_BITTORRENT
+      if (isBtTask) {
+        ++numBtActive;
+        hasBtSlot = (static_cast<int>(numBtActive) < maxBtSlots);
+      } else {
+        ++numHttpActive;
+        hasHttpSlot = (static_cast<int>(numHttpActive) < maxConcurrentDownloads);
+      }
+#else
+      ++numHttpActive;
+      hasHttpSlot = (static_cast<int>(numHttpActive) < maxConcurrentDownloads);
+#endif
+      
       ++count;
       if (res.empty()) {
         requestQueueCheck();
