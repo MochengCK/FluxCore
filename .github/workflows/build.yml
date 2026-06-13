@@ -265,12 +265,28 @@ jobs:
         make -j$NCORES && make install
         cd ../..
 
+        # ---- openssl ----
+        curl -fsSL https://www.openssl.org/source/openssl-3.4.1.tar.gz | tar xz
+        cd openssl-3.4.1
+        if [ "${{ matrix.target_arch }}" = "x86_64" ]; then
+          OS_COMPILER=darwin64-x86_64-cc
+        else
+          OS_COMPILER=darwin64-arm64-cc
+        fi
+        ./Configure "$OS_COMPILER" \
+          --prefix="$PREFIX" --openssldir="$PREFIX/ssl" \
+          -fno-common -O3 "$ARCHFLAG" no-shared no-tests
+        make -j$NCORES && make install_sw
+        cd ..
+
         # ---- libssh2 ----
         curl -fsSL https://libssh2.org/download/libssh2-1.11.1.tar.gz | tar xz
         cd libssh2-1.11.1
         ./configure --enable-static --disable-shared --prefix="$PREFIX" \
           --with-crypto=openssl \
-          CFLAGS="$ARCHFLAG -Os" LDFLAGS="$ARCHFLAG"
+          CFLAGS="$ARCHFLAG -Os -I$PREFIX/include" \
+          LDFLAGS="$ARCHFLAG -L$PREFIX/lib" \
+          PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig"
         make -j$NCORES && make install
         cd ..
 
