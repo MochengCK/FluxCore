@@ -266,26 +266,31 @@ jobs:
         cd ../..
 
         # ---- openssl ----
-        curl -fsSL https://www.openssl.org/source/openssl-3.4.1.tar.gz | tar xz
-        cd openssl-3.4.1
+        curl -fsSL https://github.com/openssl/openssl/releases/download/openssl-3.4.6/openssl-3.4.6.tar.gz | tar xz
+        cd openssl-3.4.6
         if [ "${{ matrix.target_arch }}" = "x86_64" ]; then
           OS_COMPILER=darwin64-x86_64-cc
         else
           OS_COMPILER=darwin64-arm64-cc
         fi
+        echo "Building OpenSSL for $OS_COMPILER"
         ./Configure "$OS_COMPILER" \
           --prefix="$PREFIX" --openssldir="$PREFIX/ssl" \
-          -fno-common -O3 "$ARCHFLAG" no-shared no-tests
-        make -j$NCORES && make install_sw
+          no-shared no-tests
+        make -j$NCORES
+        make install_sw
+        echo "OpenSSL built. Checking libs:"
+        ls -la "$PREFIX/lib"/libcrypto* "$PREFIX/lib"/libssl* "$PREFIX/lib/pkgconfig/"*.pc 2>/dev/null || echo "WARNING: crypto libs not found"
         cd ..
 
         # ---- libssh2 ----
         curl -fsSL https://libssh2.org/download/libssh2-1.11.1.tar.gz | tar xz
         cd libssh2-1.11.1
         export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig"
-        export CFLAGS="$ARCHFLAG -Os -I$PREFIX/include"
-        export LDFLAGS="$ARCHFLAG -L$PREFIX/lib -L$PREFIX/lib64"
+        export CFLAGS="-arch ${{ matrix.target_arch }} -Os -isysroot $(xcrun --sdk macosx --show-sdk-path) -I$PREFIX/include"
+        export LDFLAGS="-arch ${{ matrix.target_arch }} -isysroot $(xcrun --sdk macosx --show-sdk-path) -L$PREFIX/lib"
         export CPPFLAGS="-I$PREFIX/include"
+        export LIBS="-L$PREFIX/lib -lssl -lcrypto"
         ./configure --enable-static --disable-shared --prefix="$PREFIX" \
           --with-crypto=openssl \
           --with-libssl-prefix="$PREFIX"
