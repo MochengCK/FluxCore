@@ -28,9 +28,12 @@ jobs:
         fi
     - name: Linux setup
       run: |
+        if [ "${{ matrix.arch }}" = "arm64" ]; then
+          sudo dpkg --add-architecture arm64
+        fi
         sudo apt-get update --allow-releaseinfo-change
         if [ "${{ matrix.arch }}" = "arm64" ]; then
-          sudo apt-get install \
+          sudo apt-get install -y \
             g++-12-aarch64-linux-gnu \
             gcc-12-aarch64-linux-gnu \
             autoconf \
@@ -50,14 +53,6 @@ jobs:
             patchelf \
             cmake \
             wget
-          sudo dpkg --add-architecture arm64
-          sudo apt-get update
-          sudo apt-get install -y \
-            libssl-dev:arm64 \
-            zlib1g-dev:arm64 \
-            libsqlite3-dev:arm64 \
-            libssh2-1-dev:arm64 \
-            libexpat1-dev:arm64
         else
           sudo apt-get install \
             g++-12 \
