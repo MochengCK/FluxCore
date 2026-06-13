@@ -282,11 +282,13 @@ jobs:
         # ---- libssh2 ----
         curl -fsSL https://libssh2.org/download/libssh2-1.11.1.tar.gz | tar xz
         cd libssh2-1.11.1
+        export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig"
+        export CFLAGS="$ARCHFLAG -Os -I$PREFIX/include"
+        export LDFLAGS="$ARCHFLAG -L$PREFIX/lib -L$PREFIX/lib64"
+        export CPPFLAGS="-I$PREFIX/include"
         ./configure --enable-static --disable-shared --prefix="$PREFIX" \
           --with-crypto=openssl \
-          CFLAGS="$ARCHFLAG -Os -I$PREFIX/include" \
-          LDFLAGS="$ARCHFLAG -L$PREFIX/lib" \
-          PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig"
+          --with-libssl-prefix="$PREFIX"
         make -j$NCORES && make install
         cd ..
 
