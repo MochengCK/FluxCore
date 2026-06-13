@@ -28,23 +28,10 @@ jobs:
         fi
     - name: Linux setup
       run: |
+        sudo apt-get update --allow-releaseinfo-change
         if [ "${{ matrix.arch }}" = "arm64" ]; then
-          sudo dpkg --add-architecture arm64
-          # Add arm64 ports repository (Azure mirrors don't serve arm64)
-          sudo tee /etc/apt/sources.list.d/arm64-ports.list > /dev/null <<-EOF
-          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy main universe
-          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-updates main universe
-          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-security main universe
-          EOF
-          # Restrict existing sources to amd64 only
-          sudo sed -i 's/^deb /deb [arch=amd64] /g' /etc/apt/sources.list
-          sudo sed -i 's/^deb-src /deb-src [arch=amd64] /g' /etc/apt/sources.list
-        fi
-        sudo apt-get update --allow-release-info-change
-        if [ "${{ matrix.arch }}" = "arm64" ]; then
-          sudo apt-get install -y \
-            g++-12-aarch64-linux-gnu \
-            gcc-12-aarch64-linux-gnu \
+          sudo apt-get install \
+            g++-12 \
             autoconf \
             automake \
             autotools-dev \
@@ -54,11 +41,11 @@ jobs:
             xz-utils \
             libtool \
             pkgconf \
-            libssl-dev:arm64 \
-            zlib1g-dev:arm64 \
-            libsqlite3-dev:arm64 \
-            libssh2-1-dev:arm64 \
-            libexpat1-dev:arm64 \
+            libssl-dev \
+            zlib1g-dev \
+            libsqlite3-dev \
+            libssh2-1-dev \
+            libexpat1-dev \
             patchelf \
             cmake \
             wget
@@ -86,10 +73,6 @@ jobs:
     - name: Install c-ares 1.34.6
       run: |
         # Check if system c-ares is sufficient
-        if [ "${{ matrix.arch }}" = "arm64" ]; then
-          PKG_CONFIG_PATH="/usr/lib/aarch64-linux-gnu/pkgconfig:${PKG_CONFIG_PATH:-}"
-          export PKG_CONFIG_PATH
-        fi
         if pkg-config --exists libcares && pkg-config --atleast-version=1.34.0 libcares; then
           echo "System c-ares version is sufficient"
           pkg-config --modversion libcares
@@ -99,17 +82,12 @@ jobs:
           tar xzf c-ares-1.34.6.tar.gz
           cd c-ares-1.34.6
           mkdir build && cd build
-          CMAKE_EXTRA=""
-          if [ "${{ matrix.arch }}" = "arm64" ]; then
-            CMAKE_EXTRA="-DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=aarch64 -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc-12 -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++-12"
-          fi
           cmake .. \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX=/usr/local \
             -DCARES_STATIC=ON \
             -DCARES_SHARED=ON \
-            -DCARES_BUILD_TESTS=OFF \
-            $CMAKE_EXTRA
+            -DCARES_BUILD_TESTS=OFF
           make -j$(nproc)
           sudo make install
           sudo ldconfig
@@ -149,10 +127,9 @@ jobs:
       working-directory: ${{ env.FLUXCORE_DIR }}
       run: |
         if [ "${{ matrix.arch }}" = "arm64" ]; then
-          export CC=aarch64-linux-gnu-gcc-12
-          export CXX=aarch64-linux-gnu-g++-12
-          HOST_FLAG="--host=aarch64-linux-gnu"
-          export PKG_CONFIG_PATH="/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+          export CC=gcc
+          export CXX=g++
+          HOST_FLAG=""
         else
           HOST_FLAG=""
         fi
@@ -176,11 +153,7 @@ jobs:
     - name: Verify binary
       working-directory: ${{ env.FLUXCORE_DIR }}
       run: |
-        if [ "${{ matrix.arch }}" = "arm64" ]; then
-          file src/fluxcore
-        else
-          ./src/fluxcore -v
-        fi
+        ./src/fluxcore -v
     - name: Collect Linux runtime libs
       shell: bash
       run: |
@@ -192,14 +165,7 @@ jobs:
         chmod +x "$OUT_DIR/fluxcore" || true
 
         # Bundle key shared libs so downstream app packaging can run on hosts missing them.
-        if [ "${{ matrix.arch }}" = "arm64" ]; then
-          LDD_CMD="aarch64-linux-gnu-ldd"
-          PATCHELF_CMD="aarch64-linux-gnu-patchelf"
-        else
-          LDD_CMD="ldd"
-          PATCHELF_CMD="patchelf"
-        fi
-        $LDD_CMD "$BIN_PATH" | awk '/=> \// {print $1, $3}' | while read -r soname realpath; do
+        ldd "$BIN_PATH" | awk '/=> \// {print $1, $3}' | while read -r soname realpath; do
           case "$soname" in
             libssh2.so.*|libgcrypt.so.*|libgpg-error.so.*|libgmp.so.*|libcares.so.*|libxml2.so.*|libsqlite3.so.*|libz.so.*|libexpat.so.*)
               cp -Lv "$realpath" "$OUT_DIR/lib/$soname" || true
@@ -207,12 +173,12 @@ jobs:
           esac
         done
         # Make binary self-contained: prefer bundled libs under ./lib
-        $PATCHELF_CMD --set-rpath '$ORIGIN/lib:$ORIGIN' "$OUT_DIR/fluxcore" || true
+        patchelf --set-rpath '$ORIGIN/lib:$ORIGIN' "$OUT_DIR/fluxcore" || true
         # Verify final bundle does not miss libs
-        $LDD_CMD "$OUT_DIR/fluxcore" || true
-        if $LDD_CMD "$OUT_DIR/fluxcore" | grep -q "not found"; then
+        ldd "$OUT_DIR/fluxcore" || true
+        if ldd "$OUT_DIR/fluxcore" | grep -q "not found"; then
           echo "ERROR: unresolved shared libraries in bundled fluxcore"
-          $LDD_CMD "$OUT_DIR/fluxcore"
+          ldd "$OUT_DIR/fluxcore"
           exit 1
         fi
         ls -la "$OUT_DIR"
@@ -231,8 +197,10 @@ jobs:
         include:
           - runner: macos-13
             arch: x64
-          - runner: macos-14
+            target_arch: x86_64
+          - runner: macos-latest
             arch: arm64
+            target_arch: arm64
     steps:
     - uses: actions/checkout@v6
       with:
@@ -300,9 +268,9 @@ jobs:
     - name: Configure
       working-directory: ${{ env.FLUXCORE_DIR }}
       run: |
-        export CFLAGS="-Os -ffunction-sections -fdata-sections"
-        export CXXFLAGS="-Os -ffunction-sections -fdata-sections"
-        export LDFLAGS="-Wl,-dead_strip"
+        export CFLAGS="-arch ${{ matrix.target_arch }} -Os -ffunction-sections -fdata-sections"
+        export CXXFLAGS="-arch ${{ matrix.target_arch }} -Os -ffunction-sections -fdata-sections"
+        export LDFLAGS="-arch ${{ matrix.target_arch }} -Wl,-dead_strip"
         ./configure \
           --without-openssl --without-gnutls --with-appletls \
           --with-libcares \
