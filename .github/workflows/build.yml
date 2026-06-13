@@ -223,10 +223,10 @@ jobs:
     - name: Build macOS deps from source
       env:
         PREFIX: /tmp/flux-deps-${{ matrix.arch }}
-        NCORES: $(sysctl -n hw.ncpu)
         ARCHFLAG: -arch ${{ matrix.target_arch }}
       run: |
         set -euo pipefail
+        NCORES=$(sysctl -n hw.ncpu)
         mkdir -p "$PREFIX"
 
         # ---- zlib ----
