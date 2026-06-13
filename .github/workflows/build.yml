@@ -31,7 +31,8 @@ jobs:
         sudo apt-get update --allow-releaseinfo-change
         if [ "${{ matrix.arch }}" = "arm64" ]; then
           sudo apt-get install \
-            g++-12 \
+            g++-12-aarch64-linux-gnu \
+            gcc-12-aarch64-linux-gnu \
             autoconf \
             automake \
             autotools-dev \
@@ -41,14 +42,22 @@ jobs:
             xz-utils \
             libtool \
             pkgconf \
-            libssl-dev \
-            zlib1g-dev \
-            libsqlite3-dev \
-            libssh2-1-dev \
-            libexpat1-dev \
+            libssl-dev:arm64 \
+            zlib1g-dev:arm64 \
+            libsqlite3-dev:arm64 \
+            libssh2-1-dev:arm64 \
+            libexpat1-dev:arm64 \
             patchelf \
             cmake \
             wget
+          sudo dpkg --add-architecture arm64
+          sudo apt-get update
+          sudo apt-get install -y \
+            libssl-dev:arm64 \
+            zlib1g-dev:arm64 \
+            libsqlite3-dev:arm64 \
+            libssh2-1-dev:arm64 \
+            libexpat1-dev:arm64
         else
           sudo apt-get install \
             g++-12 \
@@ -73,6 +82,10 @@ jobs:
     - name: Install c-ares 1.34.6
       run: |
         # Check if system c-ares is sufficient
+        if [ "${{ matrix.arch }}" = "arm64" ]; then
+          PKG_CONFIG_PATH="/usr/lib/aarch64-linux-gnu/pkgconfig:${PKG_CONFIG_PATH:-}"
+          export PKG_CONFIG_PATH
+        fi
         if pkg-config --exists libcares && pkg-config --atleast-version=1.34.0 libcares; then
           echo "System c-ares version is sufficient"
           pkg-config --modversion libcares
@@ -82,12 +95,17 @@ jobs:
           tar xzf c-ares-1.34.6.tar.gz
           cd c-ares-1.34.6
           mkdir build && cd build
+          CMAKE_EXTRA=""
+          if [ "${{ matrix.arch }}" = "arm64" ]; then
+            CMAKE_EXTRA="-DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=aarch64 -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc-12 -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++-12"
+          fi
           cmake .. \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX=/usr/local \
             -DCARES_STATIC=ON \
             -DCARES_SHARED=ON \
-            -DCARES_BUILD_TESTS=OFF
+            -DCARES_BUILD_TESTS=OFF \
+            $CMAKE_EXTRA
           make -j$(nproc)
           sudo make install
           sudo ldconfig
@@ -127,9 +145,10 @@ jobs:
       working-directory: ${{ env.FLUXCORE_DIR }}
       run: |
         if [ "${{ matrix.arch }}" = "arm64" ]; then
-          export CC=gcc
-          export CXX=g++
-          HOST_FLAG=""
+          export CC=aarch64-linux-gnu-gcc-12
+          export CXX=aarch64-linux-gnu-g++-12
+          HOST_FLAG="--host=aarch64-linux-gnu"
+          export PKG_CONFIG_PATH="/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
         else
           HOST_FLAG=""
         fi
@@ -153,7 +172,11 @@ jobs:
     - name: Verify binary
       working-directory: ${{ env.FLUXCORE_DIR }}
       run: |
-        ./src/fluxcore -v
+        if [ "${{ matrix.arch }}" = "arm64" ]; then
+          file src/fluxcore
+        else
+          ./src/fluxcore -v
+        fi
     - name: Collect Linux runtime libs
       shell: bash
       run: |
@@ -165,7 +188,14 @@ jobs:
         chmod +x "$OUT_DIR/fluxcore" || true
 
         # Bundle key shared libs so downstream app packaging can run on hosts missing them.
-        ldd "$BIN_PATH" | awk '/=> \// {print $1, $3}' | while read -r soname realpath; do
+        if [ "${{ matrix.arch }}" = "arm64" ]; then
+          LDD_CMD="aarch64-linux-gnu-ldd"
+          PATCHELF_CMD="aarch64-linux-gnu-patchelf"
+        else
+          LDD_CMD="ldd"
+          PATCHELF_CMD="patchelf"
+        fi
+        $LDD_CMD "$BIN_PATH" | awk '/=> \// {print $1, $3}' | while read -r soname realpath; do
           case "$soname" in
             libssh2.so.*|libgcrypt.so.*|libgpg-error.so.*|libgmp.so.*|libcares.so.*|libxml2.so.*|libsqlite3.so.*|libz.so.*|libexpat.so.*)
               cp -Lv "$realpath" "$OUT_DIR/lib/$soname" || true
@@ -173,12 +203,12 @@ jobs:
           esac
         done
         # Make binary self-contained: prefer bundled libs under ./lib
-        patchelf --set-rpath '$ORIGIN/lib:$ORIGIN' "$OUT_DIR/fluxcore" || true
+        $PATCHELF_CMD --set-rpath '$ORIGIN/lib:$ORIGIN' "$OUT_DIR/fluxcore" || true
         # Verify final bundle does not miss libs
-        ldd "$OUT_DIR/fluxcore" || true
-        if ldd "$OUT_DIR/fluxcore" | grep -q "not found"; then
+        $LDD_CMD "$OUT_DIR/fluxcore" || true
+        if $LDD_CMD "$OUT_DIR/fluxcore" | grep -q "not found"; then
           echo "ERROR: unresolved shared libraries in bundled fluxcore"
-          ldd "$OUT_DIR/fluxcore"
+          $LDD_CMD "$OUT_DIR/fluxcore"
           exit 1
         fi
         ls -la "$OUT_DIR"
@@ -195,7 +225,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-latest
+          - runner: macos-13
             arch: x64
           - runner: macos-14
             arch: arm64
