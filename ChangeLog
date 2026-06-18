@@ -1,0 +1,14 @@
+2026-06-18  FluxCore Development Team
+
+	Release FluxCore 1.2.2
+	
+	* Version bump from 1.2.1 to 1.2.2
+	* General improvements and bug fixes
+	* Performance optimizations for download engine
+	* Enhanced stability and reliability
+
+---
+
+For detailed revision history, use:
+    git log --pretty=fuller --date=short
+

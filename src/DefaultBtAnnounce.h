@@ -49,7 +49,7 @@ struct TrackerStats {
   std::string failureReason;  // 失败原因
   int downloadCount;  // 下载次数（连接次数）
   std::chrono::system_clock::time_point nextAnnounceTime;  // 下次连接时间
-  TrackerStats() : seeders(0), leechers(0), status("unknown"), failureReason(""), downloadCount(0), 
+  TrackerStats() : seeders(0), leechers(0), status("waiting"), failureReason(""), downloadCount(0),
                    nextAnnounceTime(std::chrono::system_clock::time_point()) {}
 };
 

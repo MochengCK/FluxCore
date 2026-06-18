@@ -72,6 +72,16 @@ DefaultBtAnnounce::DefaultBtAnnounce(DownloadContext* downloadContext,
       randomizer_(SimpleRandomizer::getInstance().get()),
       tcpPort_(0)
 {
+  // Pre-initialize trackerStatsMap_ with all tracker URLs from announce list
+  // so that all trackers show meaningful initial status instead of "pending"
+  auto torrentAttrs = bittorrent::getTorrentAttrs(downloadContext);
+  if (torrentAttrs) {
+    for (const auto& tier : torrentAttrs->announceList) {
+      for (const auto& url : tier) {
+        trackerStatsMap_[url] = TrackerStats();
+      }
+    }
+  }
 }
 
 DefaultBtAnnounce::~DefaultBtAnnounce() = default;
