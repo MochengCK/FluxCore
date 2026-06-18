@@ -322,7 +322,7 @@ jobs:
       run: |
         export CFLAGS="-arch ${{ matrix.target_arch }} -Os -ffunction-sections -fdata-sections -I$PREFIX/include"
         export CXXFLAGS="-arch ${{ matrix.target_arch }} -Os -ffunction-sections -fdata-sections -I$PREFIX/include"
-        export LDFLAGS="-arch ${{ matrix.target_arch }} -Wl,-dead_strip -L$PREFIX/lib"
+        export LDFLAGS="-arch ${{ matrix.target_arch }} -Wl,-dead_strip -L$PREFIX/lib -Wl,-rpath,$PREFIX/lib"
         export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig"
         ./configure \
           --without-openssl --without-gnutls --with-appletls \
@@ -332,7 +332,8 @@ jobs:
           --with-libexpat \
           --with-libz \
           --without-libxml2 \
-          --disable-nls
+          --disable-nls \
+          ARIA2_STATIC=no
     - name: Build
       working-directory: ${{ env.FLUXCORE_DIR }}
       run: |
@@ -340,12 +341,19 @@ jobs:
         strip -x src/fluxcore || true
     - name: Verify binary
       working-directory: ${{ env.FLUXCORE_DIR }}
+      env:
+        PREFIX: /tmp/flux-deps-${{ matrix.arch }}
       run: |
         file src/fluxcore
+        # Set DYLD_LIBRARY_PATH for runtime library discovery
+        export DYLD_LIBRARY_PATH="$PREFIX/lib:$DYLD_LIBRARY_PATH"
         if [ "${{ matrix.arch }}" = "x64" ]; then
           echo "x64 cross-compiled binary, cannot run on arm64 host. Skipping -v check."
           file src/fluxcore | grep -q "x86_64" || { echo "ERROR: not x86_64"; exit 1; }
         else
+          # Check what libraries are linked
+          otool -L src/fluxcore
+          # Try to run the binary
           ./src/fluxcore -v
         fi
     - name: Collect macOS runtime libs
