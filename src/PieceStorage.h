@@ -222,6 +222,12 @@ public:
   // TODO We can remove this.
   virtual void setEndGamePieceNum(size_t num) = 0;
 
+  // Returns the configured end game piece threshold.
+  virtual size_t getEndGamePieceNum() const = 0;
+
+  // Returns the number of missing (not yet downloaded) pieces.
+  virtual size_t countMissingPiece() const = 0;
+
   virtual std::shared_ptr<DiskAdaptor> getDiskAdaptor() = 0;
 
   virtual WrDiskCache* getWrDiskCache() = 0;

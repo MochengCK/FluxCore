@@ -413,8 +413,19 @@ void DefaultBtInteractive::fillPiece(size_t maxMissingBlock)
 
 void DefaultBtInteractive::addRequests()
 {
-  if (!pieceStorage_->isEndGame() && !pieceStorage_->hasMissingUnusedPiece()) {
-    pieceStorage_->enterEndGame();
+  if (!pieceStorage_->isEndGame()) {
+    // Trigger endgame mode when remaining pieces fall below the
+    // configured threshold, or when there are no missing unused pieces
+    // left to assign. This avoids stalling near completion.
+    size_t endGameThreshold = pieceStorage_->getEndGamePieceNum();
+    if (endGameThreshold == 0) {
+      endGameThreshold = 20;
+    }
+    size_t remaining = pieceStorage_->countMissingPiece();
+    if (remaining <= endGameThreshold ||
+        !pieceStorage_->hasMissingUnusedPiece()) {
+      pieceStorage_->enterEndGame();
+    }
   }
   fillPiece(maxOutstandingRequest_);
   size_t reqNumToCreate =

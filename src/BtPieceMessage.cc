@@ -241,7 +241,7 @@ std::string BtPieceMessage::toString() const
 
 bool BtPieceMessage::checkPieceHash(const std::shared_ptr<Piece>& piece)
 {
-  if (!getPieceStorage()->isEndGame() && piece->isHashCalculated()) {
+  if (piece->isHashCalculated()) {
     A2_LOG_DEBUG(fmt("Hash is available!! index=%lu",
                      static_cast<unsigned long>(piece->getIndex())));
     return piece->getDigest() ==

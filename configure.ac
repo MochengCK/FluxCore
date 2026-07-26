@@ -2,7 +2,7 @@
 # Process this file with autoconf to produce a configure script.
 #
 AC_PREREQ([2.67])
-AC_INIT([FluxCore],[1.2.2],[https://github.com/aria2/aria2/issues],[fluxcore],[https://aria2.github.io/])
+AC_INIT([FluxCore],[1.2.4],[https://github.com/aria2/aria2/issues],[fluxcore],[https://aria2.github.io/])
 
 AC_CANONICAL_HOST
 AC_CANONICAL_TARGET

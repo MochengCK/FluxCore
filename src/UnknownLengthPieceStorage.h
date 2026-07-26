@@ -212,6 +212,10 @@ public:
 
   virtual void setEndGamePieceNum(size_t num) CXX11_OVERRIDE {}
 
+  virtual size_t getEndGamePieceNum() const CXX11_OVERRIDE { return 0; }
+
+  virtual size_t countMissingPiece() const CXX11_OVERRIDE { return 0; }
+
   virtual std::shared_ptr<DiskAdaptor> getDiskAdaptor() CXX11_OVERRIDE;
 
   virtual WrDiskCache* getWrDiskCache() CXX11_OVERRIDE { return nullptr; }

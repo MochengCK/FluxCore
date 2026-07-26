@@ -222,7 +222,15 @@ public:
     endGamePieceNum_ = num;
   }
 
-  size_t getEndGamePieceNum() const { return endGamePieceNum_; }
+  virtual size_t getEndGamePieceNum() const CXX11_OVERRIDE
+  {
+    return endGamePieceNum_;
+  }
+
+  virtual size_t countMissingPiece() const CXX11_OVERRIDE
+  {
+    return bitfieldMan_->countMissingBlock();
+  }
 
   virtual bool isSelectiveDownloadingMode() CXX11_OVERRIDE;
 

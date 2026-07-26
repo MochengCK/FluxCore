@@ -732,10 +732,12 @@ bool SegmentMan::splitAndReallocateSegment(cuid_t slowCuid)
   
   const auto& slowSegment = slowEntry->segment;
   int64_t remaining = slowSegment->getLength() - slowSegment->getWrittenLength();
-  
+
   // Calculate split size (half of remaining)
   int64_t splitSize = remaining / 2;
-  if (splitSize < DYNAMIC_MIN_SPLIT_SIZE) {
+  // In endgame mode, allow smaller splits to keep connections busy
+  int64_t minSplit = isEndgameMode() ? ENDGAME_MIN_SPLIT_SIZE : DYNAMIC_MIN_SPLIT_SIZE;
+  if (splitSize < minSplit) {
     return false;
   }
   

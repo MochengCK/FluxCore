@@ -286,6 +286,7 @@ void MSEHandshake::sendInitiatorStep2()
   ptr += VC_LENGTH;
   // crypto_provide
   if (!option_->getAsBool(PREF_BT_FORCE_ENCRYPTION) &&
+      !option_->getAsBool(PREF_BT_REQUIRE_CRYPTO) &&
       option_->get(PREF_BT_MIN_CRYPTO_LEVEL) == V_PLAIN) {
     ptr[3] = CRYPTO_PLAIN_TEXT;
   }
@@ -348,6 +349,7 @@ bool MSEHandshake::receiveInitiatorCryptoSelectAndPadDLength()
   decryptor_->encrypt(CRYPTO_BITFIELD_LENGTH, rbufptr, rbufptr);
   if ((rbufptr[3] & CRYPTO_PLAIN_TEXT) &&
       !option_->getAsBool(PREF_BT_FORCE_ENCRYPTION) &&
+      !option_->getAsBool(PREF_BT_REQUIRE_CRYPTO) &&
       option_->get(PREF_BT_MIN_CRYPTO_LEVEL) == V_PLAIN) {
     A2_LOG_DEBUG(fmt("CUID#%" PRId64 " - peer prefers plaintext.", cuid_));
     negotiatedCryptoType_ = CRYPTO_PLAIN_TEXT;
@@ -446,6 +448,7 @@ bool MSEHandshake::receiveReceiverHashAndPadCLength(
   // For now, choose ARC4.
   if ((rbufptr[3] & CRYPTO_PLAIN_TEXT) &&
       !option_->getAsBool(PREF_BT_FORCE_ENCRYPTION) &&
+      !option_->getAsBool(PREF_BT_REQUIRE_CRYPTO) &&
       option_->get(PREF_BT_MIN_CRYPTO_LEVEL) == V_PLAIN) {
     A2_LOG_DEBUG(fmt("CUID#%" PRId64 " - peer provides plaintext.", cuid_));
     negotiatedCryptoType_ = CRYPTO_PLAIN_TEXT;
