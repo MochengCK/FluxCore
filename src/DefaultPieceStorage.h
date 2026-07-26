@@ -227,10 +227,7 @@ public:
     return endGamePieceNum_;
   }
 
-  virtual size_t countMissingPiece() const CXX11_OVERRIDE
-  {
-    return bitfieldMan_->countMissingBlock();
-  }
+  virtual size_t countMissingPiece() const CXX11_OVERRIDE;
 
   virtual bool isSelectiveDownloadingMode() CXX11_OVERRIDE;
 

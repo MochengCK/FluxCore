@@ -383,6 +383,11 @@ bool DefaultPieceStorage::hasMissingUnusedPiece()
   return bitfieldMan_->getFirstMissingUnusedIndex(index);
 }
 
+size_t DefaultPieceStorage::countMissingPiece() const
+{
+  return bitfieldMan_->countMissingBlock();
+}
+
 std::shared_ptr<Piece>
 DefaultPieceStorage::getMissingPiece(size_t minSplitSize,
                                      const unsigned char* ignoreBitfield,
