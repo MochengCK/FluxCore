@@ -80,6 +80,16 @@ bool PeerInitiateConnectionCommand::executeInternal()
   getSocket()->establishConnection(getPeer()->getIPAddress(),
                                    getPeer()->getPort(), false);
   getSocket()->applyIpDscp();
+  // 不加密模式（REQUIRE=F && MIN_LEVEL=plain）：直接发 Legacy BT 握手，
+  // 跳过 MSE DH 协商。自适应/强制加密模式仍走 MSE。
+  // 仅当 mseHandshakeEnabled_ 为 true（默认值）时按配置调整；若调用方
+  // 显式传 false（MSE 失败回退 Legacy），保持 false 不变。
+  const auto* opt = getDownloadEngine()->getOption();
+  if (mseHandshakeEnabled_ && !opt->getAsBool(PREF_BT_REQUIRE_CRYPTO) &&
+      !opt->getAsBool(PREF_BT_FORCE_ENCRYPTION) &&
+      opt->get(PREF_BT_MIN_CRYPTO_LEVEL) == V_PLAIN) {
+    mseHandshakeEnabled_ = false;
+  }
   if (mseHandshakeEnabled_) {
     auto c = make_unique<InitiatorMSEHandshakeCommand>(
         getCuid(), requestGroup_, getPeer(), getDownloadEngine(), btRuntime_,
