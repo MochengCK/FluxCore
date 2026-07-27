@@ -1664,8 +1664,6 @@ std::unique_ptr<ValueBase> GetTrackersRpcMethod::process(const RpcRequest& req,
     return List::g();
   }
 
-  auto result = List::g();
-
   int currentPeers = 0;
   if (btObject->peerStorage) {
     auto& usedPeers = btObject->peerStorage->getUsedPeers();
