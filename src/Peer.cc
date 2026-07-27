@@ -401,4 +401,11 @@ bool Peer::isEncrypted() const
   return res_ && res_->encrypted();
 }
 
+void Peer::setEncrypted(bool b)
+{
+  if (res_) {
+    res_->encrypted(b);
+  }
+}
+
 } // namespace aria2

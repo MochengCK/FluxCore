@@ -292,6 +292,8 @@ public:
   size_t countOutstandingUpload() const;
 
   bool isEncrypted() const;
+
+  void setEncrypted(bool b);
 };
 
 template <typename InputIterator>
