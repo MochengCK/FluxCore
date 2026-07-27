@@ -668,6 +668,11 @@ void DefaultBtInteractive::setBtRequestFactory(
 void DefaultBtInteractive::setPeerConnection(
     std::unique_ptr<PeerConnection> peerConnection)
 {
+  // 从PeerConnection获取加密状态，同步到PeerSessionResource
+  // 这样RPC getPeers就能通过Peer->isEncrypted()获取真实加密状态
+  if (peerConnection) {
+    peer_->encrypted(peerConnection->isEncryptionEnabled());
+  }
   peerConnection_ = std::move(peerConnection);
 }
 

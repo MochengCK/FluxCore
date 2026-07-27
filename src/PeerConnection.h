@@ -111,8 +111,10 @@ public:
   bool receiveHandshake(unsigned char* data, size_t& dataLength,
                         bool peek = false);
 
-  void enableEncryption(std::unique_ptr<ARC4Encryptor> encryptor,
-                        std::unique_ptr<ARC4Encryptor> decryptor);
+void enableEncryption(std::unique_ptr<ARC4Encryptor> encryptor,
+                      std::unique_ptr<ARC4Encryptor> decryptor);
+
+bool isEncryptionEnabled() const { return encryptionEnabled_; }
 
   void presetBuffer(const unsigned char* data, size_t length);
 

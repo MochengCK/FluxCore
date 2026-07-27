@@ -958,9 +958,8 @@ void gatherPeer(List* peers, const std::shared_ptr<PeerStorage>& ps)
     peerEntry->put(KEY_INCOMING, peer->isIncomingPeer() ? VLB_TRUE : VLB_FALSE);
     // 是否是本地peer
     peerEntry->put(KEY_LOCAL_PEER, peer->isLocalPeer() ? VLB_TRUE : VLB_FALSE);
-    // 加密状态 - 目前无法直接从peer获取，默认为false
-    // TODO: 需要从PeerConnection获取加密状态
-    peerEntry->put(KEY_ENCRYPTED, VLB_FALSE);
+    // 加密状态 - 从PeerSessionResource源头获取真实加密信息
+    peerEntry->put(KEY_ENCRYPTED, peer->isEncrypted() ? VLB_TRUE : VLB_FALSE);
     // 扩展消息协议支持
     peerEntry->put(KEY_EXTENDED_MESSAGING, peer->isExtendedMessagingEnabled() ? VLB_TRUE : VLB_FALSE);
     // Fast扩展协议支持
@@ -1388,6 +1387,8 @@ std::unique_ptr<ValueBase> GetPeersRpcMethod::process(const RpcRequest& req,
       peerEntry->put(KEY_PROTOCOL, getPeerProtocolLabel(peer));
       peerEntry->put(KEY_SOURCE, getPeerSourceLabel(peer));
       peerEntry->put(KEY_ENGINE_STATUS, "attempting");
+      // 尝试连接阶段尚未完成握手，无活跃连接，加密状态无意义，返回 null
+      peerEntry->put(KEY_ENCRYPTED, Null::g());
       attemptingPeers->append(std::move(peerEntry));
     }
     
@@ -1420,6 +1421,8 @@ std::unique_ptr<ValueBase> GetPeersRpcMethod::process(const RpcRequest& req,
       peerEntry->put(KEY_PROTOCOL, getPeerProtocolLabel(peer));
       peerEntry->put(KEY_SOURCE, getPeerSourceLabel(peer));
       peerEntry->put(KEY_ENGINE_STATUS, "disconnected");
+      // 已断开连接，无活跃连接，加密状态无意义，返回 null
+      peerEntry->put(KEY_ENCRYPTED, Null::g());
       disconnectedPeers->append(std::move(peerEntry));
     }
     result->put("disconnected", std::move(disconnectedPeers));
@@ -1489,7 +1492,9 @@ std::unique_ptr<ValueBase> GetPeersRpcMethod::process(const RpcRequest& req,
         peerEntry->put(KEY_PROTOCOL, "tcp");
         peerEntry->put(KEY_SOURCE, "manual");
         peerEntry->put(KEY_ENGINE_STATUS, "banned");
-        
+        // 已封禁，无活跃连接，加密状态无意义，返回 null
+        peerEntry->put(KEY_ENCRYPTED, Null::g());
+
         bannedPeers->append(std::move(peerEntry));
         returnedCount++;
         A2_LOG_DEBUG(fmt("GetPeers: Added banned IP %s with %ld seconds remaining", 
@@ -1670,6 +1675,16 @@ std::unique_ptr<ValueBase> GetTrackersRpcMethod::process(const RpcRequest& req,
   auto defaultBtAnnounce = std::dynamic_pointer_cast<DefaultBtAnnounce>(btObject->btAnnounce);
   const auto& trackerStatsMap = defaultBtAnnounce ? defaultBtAnnounce->getTrackerStatsMap() : std::map<std::string, TrackerStats>();
 
+  // 按状态分类：working / not-working / waiting
+  auto workingTrackers = List::g();
+  auto notWorkingTrackers = List::g();
+  auto waitingTrackers = List::g();
+
+  // 返回所有追踪器，按状态分类：
+  //   - working:      成功 announce 过，已连接
+  //   - not-working:  announce 失败（网络错误、超时、错误响应等）
+  //   - waiting:      初始等待，尚未轮到 announce
+  // 这样前端可以像节点表格一样按状态分组展示。
   const auto& announceList = torrentAttrs->announceList;
   for (const auto& tier : announceList) {
     for (const auto& url : tier) {
@@ -1701,18 +1716,32 @@ std::unique_ptr<ValueBase> GetTrackersRpcMethod::process(const RpcRequest& req,
         auto epoch = nextTime.time_since_epoch();
         auto seconds = std::chrono::duration_cast<std::chrono::seconds>(epoch).count();
         trackerEntry->put("nextAnnounceTime", Integer::g(seconds));
+
+        if (it->second.status == "working") {
+          workingTrackers->append(std::move(trackerEntry));
+        } else if (it->second.status == "not-working") {
+          notWorkingTrackers->append(std::move(trackerEntry));
+        } else {
+          waitingTrackers->append(std::move(trackerEntry));
+        }
       } else {
-        trackerEntry->put("status", "pending");
+        // 未在 trackerStatsMap 中：理论不会发生（构造时已预填），
+        // 但作为兜底返回 waiting 状态而非 pending，避免前端显示死代码文案。
+        trackerEntry->put("status", "waiting");
         trackerEntry->put("peers", Integer::g(0));
         trackerEntry->put("seeders", Integer::g(0));
         trackerEntry->put("leechers", Integer::g(0));
         trackerEntry->put("downloadCount", Integer::g(0));
         trackerEntry->put("nextAnnounceTime", Integer::g(0));
+        waitingTrackers->append(std::move(trackerEntry));
       }
-
-      result->append(std::move(trackerEntry));
     }
   }
+
+  auto result = Dict::g();
+  result->put("working", std::move(workingTrackers));
+  result->put("not-working", std::move(notWorkingTrackers));
+  result->put("waiting", std::move(waitingTrackers));
 
   return std::move(result);
 }

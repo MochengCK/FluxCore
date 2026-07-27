@@ -290,6 +290,8 @@ public:
   void setBtMessageDispatcher(BtMessageDispatcher* dpt);
 
   size_t countOutstandingUpload() const;
+
+  bool isEncrypted() const;
 };
 
 template <typename InputIterator>

@@ -85,6 +85,9 @@ private:
   bool extendedMessagingEnabled_;
   bool dhtEnabled_;
 
+  // 是否启用了MSE加密（由PeerConnection的enableEncryption设置）
+  bool encrypted_;
+
 public:
   PeerSessionResource(int32_t pieceLength, int64_t totalLength);
 
@@ -177,6 +180,10 @@ public:
   bool dhtEnabled() const { return dhtEnabled_; }
 
   void dhtEnabled(bool b);
+
+  bool encrypted() const { return encrypted_; }
+
+  void encrypted(bool b) { encrypted_ = b; }
 
   NetStat& getNetStat() { return netStat_; }
 

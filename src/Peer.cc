@@ -396,4 +396,9 @@ size_t Peer::countOutstandingUpload() const
   return res_->countOutstandingUpload();
 }
 
+bool Peer::isEncrypted() const
+{
+  return res_ && res_->encrypted();
+}
+
 } // namespace aria2
