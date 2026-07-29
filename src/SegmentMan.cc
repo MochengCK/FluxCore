@@ -503,26 +503,34 @@ void SegmentMan::updateConnectionStats(cuid_t cuid, int64_t downloadedBytes)
     stats.cuid = cuid;
     stats.startTime = now;
     stats.lastUpdateTime = now;
-    stats.totalDownloaded = 0;
+    stats.totalDownloaded = downloadedBytes;
     stats.currentSpeed = 0;
     stats.avgSpeed = 0;
     stats.remainingBytes = 0;
     stats.isIdle = false;
+    return;
   }
   
-  // Calculate instantaneous speed
+  // Throttle expensive operations (speed calculation, remaining bytes
+  // iteration) to at most once every 200ms. Without this, these
+  // operations run on every executeInternal() call — potentially
+  // hundreds of times per second per connection — adding significant
+  // overhead that slows down the download loop and causes speed
+  // oscillation.
   auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
       now - stats.lastUpdateTime);
+  if (elapsed.count() < 200) {
+    // Just update total downloaded (cheap), skip the rest
+    stats.totalDownloaded = downloadedBytes;
+    return;
+  }
   
+  // Calculate instantaneous speed using delta since last full update
   if (elapsed.count() > 0) {
     int64_t newBytes = downloadedBytes - stats.totalDownloaded;
     double instantSpeed = static_cast<double>(newBytes) * 1000.0 / elapsed.count();
     
     // Use EMA (Exponential Moving Average) to smooth the speed
-    // This prevents noisy instantaneous speed from causing unnecessary
-    // segment reallocations, which would interrupt downloads and cause
-    // speed fluctuations.
-    // alpha = 0.3 gives weight to recent data while maintaining stability
     constexpr double alpha = 0.3;
     if (stats.currentSpeed == 0) {
       stats.currentSpeed = instantSpeed;
@@ -630,11 +638,20 @@ void SegmentMan::scheduleSegments()
   
   lastScheduleTime_ = now;
   
-  if (endgameMode) {
-    A2_LOG_DEBUG("ENDGAME MODE: Aggressive scheduling active");
-    // 末尾加速：强制重新分配所有慢速连接
-    forceReallocateAllSlowSegments();
+  // Only do segment reallocation in endgame mode (progress > 90%).
+  // In normal mode, reallocation causes periodic speed oscillation:
+  // each reallocation assigns a new piece to a fast connection, which
+  // triggers prepareForRetry() to send a new HTTP request, briefly
+  // pausing that connection. With 1-second scheduling intervals, this
+  // creates a fast→slow→fast→slow cycle. In normal mode, connections
+  // naturally get new segments when their current ones complete.
+  if (!endgameMode) {
+    return;
   }
+  
+  A2_LOG_DEBUG("ENDGAME MODE: Aggressive scheduling active");
+  // 末尾加速：强制重新分配所有慢速连接
+  forceReallocateAllSlowSegments();
   
   // Find slow connections that need reallocation
   std::vector<cuid_t> slowConnections;
