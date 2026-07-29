@@ -136,7 +136,7 @@ static bool isValidPublicIP(const std::string& ipaddr)
 // 快速连接探测：尝试连接到指定 IP，测量延迟
 static ConnectionProbeResult probeConnection(const std::string& ipaddr, 
                                             uint16_t port,
-                                            int timeoutMs = 2000)
+                                            int timeoutMs = 800)
 {
   ConnectionProbeResult result;
   result.ipaddr = ipaddr;
@@ -273,7 +273,7 @@ bool InitiateConnectionCommand::executeInternal()
     
     // 启动并发探测
     for (const auto& addr : validAddrs) {
-      futures.push_back(std::async(std::launch::async, probeConnection, addr, port, 2000));
+      futures.push_back(std::async(std::launch::async, probeConnection, addr, port, 800));
     }
     
     // 收集结果

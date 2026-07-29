@@ -69,7 +69,7 @@ public:
   bool bufferEmpty() const { return pos_ == last_; }
 
 private:
-  std::array<unsigned char, 16_k> buf_;
+  std::array<unsigned char, 64_k> buf_;
   std::shared_ptr<SocketCore> socket_;
   unsigned char* pos_;
   unsigned char* last_;

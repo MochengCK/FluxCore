@@ -203,6 +203,26 @@ void applySocketBufferSize(sock_t fd)
     A2_LOG_WARN(fmt("Failed to set socket send buffer size. Cause: %s",
                     errorMsg(errNum).c_str()));
   }
+  
+  // 启用 TCP keep-alive，快速检测断开的连接
+  int keepalive = 1;
+  setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, (a2_sockopt_t)&keepalive,
+             sizeof(keepalive));
+#ifdef TCP_KEEPIDLE
+  int keepidle = 30;
+  setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, (a2_sockopt_t)&keepidle,
+             sizeof(keepidle));
+#endif
+#ifdef TCP_KEEPINTVL
+  int keepintvl = 10;
+  setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, (a2_sockopt_t)&keepintvl,
+             sizeof(keepintvl));
+#endif
+#ifdef TCP_KEEPCNT
+  int keepcnt = 3;
+  setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, (a2_sockopt_t)&keepcnt,
+             sizeof(keepcnt));
+#endif
 }
 } // namespace
 
