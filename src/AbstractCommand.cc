@@ -209,10 +209,11 @@ bool AbstractCommand::execute()
                          " - It seems previously assigned segments"
                          " are canceled. Restart.",
                          getCuid()));
-        // Request::isPipeliningEnabled() == true means aria2
-        // accessed the remote server and discovered that the server
-        // supports pipelining.
-        if (req_ && req_->isPipeliningEnabled()) {
+        // Pool socket for reuse if the connection is still open and
+        // supports persistent connections, so the next command can
+        // reuse it without TCP/TLS re-establishment.
+        if (req_ && req_->supportsPersistentConnection() && socket_ &&
+            socket_->isOpen()) {
           e_->poolSocket(req_, createProxyRequest(), socket_);
         }
         return prepareForRetry(0);
@@ -284,7 +285,21 @@ bool AbstractCommand::execute()
             return true;
           }
 
-          return prepareForRetry(1);
+          // Pool socket for reuse before retry so the next
+          // CreateRequestCommand can reuse it immediately, avoiding
+          // expensive TCP/TLS re-establishment.
+          if (req_ && req_->supportsPersistentConnection() && socket_ &&
+              socket_->isOpen()) {
+            e_->poolSocket(req_, createProxyRequest(), socket_);
+          }
+
+          // Use wait=0 (immediate retry) instead of wait=1 (1 second
+          // delay) so that when a segment becomes available (e.g.
+          // another connection finishes its segment), this connection
+          // can pick it up without waiting for the next refresh cycle.
+          // The HTTP request/response cycle provides natural rate
+          // limiting to prevent busy-looping.
+          return prepareForRetry(0);
         }
       }
       else {
@@ -296,6 +311,11 @@ bool AbstractCommand::execute()
                          maxSegments);
         }
         if (segments_.empty()) {
+          // Pool socket for reuse before retry.
+          if (req_ && req_->supportsPersistentConnection() && socket_ &&
+              socket_->isOpen()) {
+            e_->poolSocket(req_, createProxyRequest(), socket_);
+          }
           return prepareForRetry(0);
         }
       }
