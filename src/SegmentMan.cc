@@ -669,11 +669,13 @@ bool SegmentMan::shouldReallocateSegment(cuid_t cuid) const
   const auto& stats = it->second;
   
   // Avoid reallocating segments for connections that just started.
-  // A connection needs time to ramp up to full speed; reallocating
-  // too early causes unnecessary churn and speed drops.
+  // A connection needs substantial time to ramp up to full speed and
+  // stabilize; reallocating too early causes unnecessary churn and
+  // speed drops. 10 seconds gives TCP congestion window time to fully
+  // open and EMA speed to stabilize.
   auto connectionAge = std::chrono::duration_cast<std::chrono::seconds>(
       std::chrono::steady_clock::now() - stats.startTime);
-  if (connectionAge.count() < 3) {
+  if (connectionAge.count() < 10) {
     return false;
   }
   
@@ -773,42 +775,24 @@ bool SegmentMan::splitAndReallocateSegment(cuid_t slowCuid)
     return false;
   }
   
-  // Try to get an unassigned piece for the fast connection
+  // Try to get an unassigned piece for the fast connection.
+  // IMPORTANT: Do NOT cancel the slow connection's segment here.
+  // Canceling an in-flight segment causes the connection to lose its
+  // HTTP request/response context and triggers prepareForRetry(),
+  // which re-establishes the connection. This was the root cause of
+  // "download starts fast, slows after a few seconds, pause/resume
+  // temporarily fixes it" — scheduleSegments() ran every 1 second
+  // and repeatedly canceled segments, disrupting all connections.
   auto piece = pieceStorage_->getMissingPiece(splitSize, 
                                               ignoreBitfield_.getFilterBitfield(),
                                               ignoreBitfield_.getBitfieldLength(), 
                                               bestCuid);
   if (!piece) {
-    // No unassigned pieces available. Cancel the slow connection's segment
-    // to free up its remaining bytes for the fast connection.
-    // This is safe in aria2's single-threaded event loop: the slow
-    // connection's DownloadCommand is not executing at this moment
-    // (it's waiting for socket data), so there's no race condition.
-    // When the slow connection's command next executes, it will detect
-    // the cancellation via getInFlightSegment() returning empty, then
-    // get a new smaller segment or become idle.
-    A2_LOG_INFO(fmt("Canceling slow CUID#%" PRId64 " segment (%" PRId64
-                    " bytes remaining) to reallocate to fast CUID#%" PRId64,
-                    slowCuid, remaining, bestCuid));
-    cancelSegment(slowCuid, slowSegment);
-    
-    // Now try again to get a piece from the freed bytes
-    piece = pieceStorage_->getMissingPiece(splitSize,
-                                           ignoreBitfield_.getFilterBitfield(),
-                                           ignoreBitfield_.getBitfieldLength(),
-                                           bestCuid);
-    if (!piece) {
-      return false;
-    }
-    
-    // Give the slow connection a smaller segment too so it still has work
-    auto slowPiece = pieceStorage_->getMissingPiece(minSplit,
-                                                     ignoreBitfield_.getFilterBitfield(),
-                                                     ignoreBitfield_.getBitfieldLength(),
-                                                     slowCuid);
-    if (slowPiece) {
-      checkoutSegment(slowCuid, slowPiece);
-    }
+    // No unassigned pieces available. Leave the slow connection alone —
+    // it will finish its current segment eventually. The fast/idle
+    // connection will pick up work when segments become available
+    // through normal segment completion.
+    return false;
   }
   
   auto newSegment = checkoutSegment(bestCuid, piece);
