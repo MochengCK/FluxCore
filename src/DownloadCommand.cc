@@ -350,16 +350,32 @@ bool DownloadCommand::prepareForNextSegment()
     return true;
   }
   else {
+    // Pool socket for reuse before any prepareForRetry call to avoid
+    // expensive TCP/TLS re-establishment on every segment completion.
+    // This is the key fix for "download speed decreases over time":
+    // without socket pooling, each completed segment triggers a full
+    // connection cycle (DNS resolve + TCP handshake + TLS handshake +
+    // HTTP request), causing speed to drop progressively.
+    auto poolSocketForReuse = [&]() {
+      if (getSocket() && getSocket()->isOpen() && getRequest() &&
+          getRequest()->supportsPersistentConnection()) {
+        getDownloadEngine()->poolSocket(
+            getRequest(), createProxyRequest(), getSocket());
+      }
+    };
+
     // The number of segments should be 1 in order to pass through the next
     // segment.
     if (getSegments().size() == 1) {
       std::shared_ptr<Segment> tempSegment = getSegments().front();
       if (!tempSegment->complete()) {
+        poolSocketForReuse();
         return prepareForRetry(0);
       }
       if (getRequestEndOffset() ==
           getFileEntry()->gtoloff(tempSegment->getPosition() +
                                   tempSegment->getLength())) {
+        poolSocketForReuse();
         return prepareForRetry(0);
       }
       std::shared_ptr<Segment> nextSegment =
@@ -373,6 +389,11 @@ bool DownloadCommand::prepareForNextSegment()
         // If nextSegment->getWrittenLength() > 0, current socket must
         // be closed because writing incoming data at
         // nextSegment->getWrittenLength() corrupts file.
+        if (!nextSegment || nextSegment->getWrittenLength() == 0) {
+          // No sequential next segment, but connection is still good.
+          // Pool socket so the next CreateRequestCommand can reuse it.
+          poolSocketForReuse();
+        }
         return prepareForRetry(0);
       }
       else {
@@ -382,6 +403,7 @@ bool DownloadCommand::prepareForNextSegment()
       }
     }
     else {
+      poolSocketForReuse();
       return prepareForRetry(0);
     }
   }

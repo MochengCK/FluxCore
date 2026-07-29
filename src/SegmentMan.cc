@@ -510,13 +510,25 @@ void SegmentMan::updateConnectionStats(cuid_t cuid, int64_t downloadedBytes)
     stats.isIdle = false;
   }
   
-  // Calculate current speed
+  // Calculate instantaneous speed
   auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
       now - stats.lastUpdateTime);
   
   if (elapsed.count() > 0) {
     int64_t newBytes = downloadedBytes - stats.totalDownloaded;
-    stats.currentSpeed = static_cast<double>(newBytes) * 1000.0 / elapsed.count();
+    double instantSpeed = static_cast<double>(newBytes) * 1000.0 / elapsed.count();
+    
+    // Use EMA (Exponential Moving Average) to smooth the speed
+    // This prevents noisy instantaneous speed from causing unnecessary
+    // segment reallocations, which would interrupt downloads and cause
+    // speed fluctuations.
+    // alpha = 0.3 gives weight to recent data while maintaining stability
+    constexpr double alpha = 0.3;
+    if (stats.currentSpeed == 0) {
+      stats.currentSpeed = instantSpeed;
+    } else {
+      stats.currentSpeed = alpha * instantSpeed + (1.0 - alpha) * stats.currentSpeed;
+    }
   }
   
   stats.totalDownloaded = downloadedBytes;
@@ -656,6 +668,15 @@ bool SegmentMan::shouldReallocateSegment(cuid_t cuid) const
   
   const auto& stats = it->second;
   
+  // Avoid reallocating segments for connections that just started.
+  // A connection needs time to ramp up to full speed; reallocating
+  // too early causes unnecessary churn and speed drops.
+  auto connectionAge = std::chrono::duration_cast<std::chrono::seconds>(
+      std::chrono::steady_clock::now() - stats.startTime);
+  if (connectionAge.count() < 3) {
+    return false;
+  }
+  
   // 末尾加速模式：更激进的重新分配策略
   bool endgameMode = isEndgameMode();
   
@@ -673,8 +694,11 @@ bool SegmentMan::shouldReallocateSegment(cuid_t cuid) const
   
   double progress = getDownloadProgress();
   
-  // 末尾加速模式：更宽松的慢速判断标准
-  double slowThreshold = endgameMode ? (SLOW_CONNECTION_THRESHOLD * 1.5) : SLOW_CONNECTION_THRESHOLD;
+  // Use relative slow threshold based on average speed.
+  // With EMA-smoothed currentSpeed, we can use the same threshold
+  // for both endgame and normal modes to avoid over-aggressive
+  // reallocation in endgame mode.
+  double slowThreshold = SLOW_CONNECTION_THRESHOLD;
   
   // Condition 1: Speed too slow
   if (stats.currentSpeed < avgSpeed * slowThreshold) {
@@ -685,12 +709,14 @@ bool SegmentMan::shouldReallocateSegment(cuid_t cuid) const
     return true;
   }
   
-  // Condition 2: Near completion and slow (progress > 85% and speed < 100KB/s)
-  // 在末尾加速模式下，速度阈值提高到 200KB/s
-  int64_t speedThreshold = endgameMode ? (200 * 1024) : (100 * 1024);
-  if (progress > PREEMPTION_PROGRESS_THRESHOLD && 
-      stats.currentSpeed < speedThreshold) {
-    return true;
+  // Condition 2: Near completion and very slow
+  // Use relative threshold (15% of average) with a floor of 50KB/s
+  // to avoid flagging all connections when overall speed is low
+  if (progress > PREEMPTION_PROGRESS_THRESHOLD) {
+    double relThreshold = std::max(avgSpeed * 0.15, 50.0 * 1024.0);
+    if (stats.currentSpeed < relThreshold) {
+      return true;
+    }
   }
   
   // Condition 3: Remaining bytes far exceed average
@@ -747,13 +773,42 @@ bool SegmentMan::splitAndReallocateSegment(cuid_t slowCuid)
     return false;
   }
   
-  // Get a new piece for the fast connection
+  // Try to get an unassigned piece for the fast connection
   auto piece = pieceStorage_->getMissingPiece(splitSize, 
                                               ignoreBitfield_.getFilterBitfield(),
                                               ignoreBitfield_.getBitfieldLength(), 
                                               bestCuid);
   if (!piece) {
-    return false;
+    // No unassigned pieces available. Cancel the slow connection's segment
+    // to free up its remaining bytes for the fast connection.
+    // This is safe in aria2's single-threaded event loop: the slow
+    // connection's DownloadCommand is not executing at this moment
+    // (it's waiting for socket data), so there's no race condition.
+    // When the slow connection's command next executes, it will detect
+    // the cancellation via getInFlightSegment() returning empty, then
+    // get a new smaller segment or become idle.
+    A2_LOG_INFO(fmt("Canceling slow CUID#%" PRId64 " segment (%" PRId64
+                    " bytes remaining) to reallocate to fast CUID#%" PRId64,
+                    slowCuid, remaining, bestCuid));
+    cancelSegment(slowCuid, slowSegment);
+    
+    // Now try again to get a piece from the freed bytes
+    piece = pieceStorage_->getMissingPiece(splitSize,
+                                           ignoreBitfield_.getFilterBitfield(),
+                                           ignoreBitfield_.getBitfieldLength(),
+                                           bestCuid);
+    if (!piece) {
+      return false;
+    }
+    
+    // Give the slow connection a smaller segment too so it still has work
+    auto slowPiece = pieceStorage_->getMissingPiece(minSplit,
+                                                     ignoreBitfield_.getFilterBitfield(),
+                                                     ignoreBitfield_.getBitfieldLength(),
+                                                     slowCuid);
+    if (slowPiece) {
+      checkoutSegment(slowCuid, slowPiece);
+    }
   }
   
   auto newSegment = checkoutSegment(bestCuid, piece);
