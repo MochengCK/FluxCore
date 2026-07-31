@@ -185,6 +185,20 @@ bool Ed2kDownloadCommand::execute()
                    err);
     return prepareForRetry(0);
   }
+  catch (RecoverableException& err) {
+    getRequestGroup()->setLastErrorCode(err.getErrorCode(), err.what());
+    A2_LOG_ERROR_EX(fmt("CUID#%" PRId64 " - ED2K download error: %s",
+                        getCuid(), getRequest()->getUri().c_str()),
+                    err);
+    return true;
+  }
+  catch (std::exception& err) {
+    A2_LOG_ERROR(fmt("CUID#%" PRId64 " - ED2K unexpected error: %s",
+                     getCuid(), err.what()));
+    getRequestGroup()->setLastErrorCode(error_code::UNKNOWN_ERROR,
+                                        err.what());
+    return true;
+  }
 }
 
 bool Ed2kDownloadCommand::sendEd2kMessage(unsigned char msgType,

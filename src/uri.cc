@@ -99,11 +99,8 @@ bool parse(UriStruct& result, const std::string& uri)
                          res.fields[USR_SCHEME].len);
   result.host.assign(p + res.fields[USR_HOST].off, res.fields[USR_HOST].len);
   if (res.port == 0) {
-    uint16_t defPort;
-    if ((defPort = getDefaultPort(result.protocol)) == 0) {
-      return false;
-    }
-    result.port = defPort;
+    uint16_t defPort = getDefaultPort(result.protocol);
+    result.port = defPort != 0 ? defPort : 0;
   }
   else {
     result.port = res.port;

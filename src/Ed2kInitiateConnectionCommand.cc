@@ -43,6 +43,8 @@
 #include "Ed2kDownloadCommand.h"
 #include "Segment.h"
 #include "DlAbortEx.h"
+#include "error_code.h"
+#include "RecoverableException.h"
 #include "Logger.h"
 #include "LogFactory.h"
 #include "message.h"
@@ -78,122 +80,129 @@ std::unique_ptr<Command> Ed2kInitiateConnectionCommand::createNextCommand(
 
 bool Ed2kInitiateConnectionCommand::execute()
 {
-  // ED2K links are of the form:
-  // ed2k://|file|<filename>|<filesize>|<filehash>|h=<parthash1>,<parthash2>,...|/
-  // or
-  // ed2k://|file|<filename>|<filesize>|<filehash>|p=<server_ip>:<server_port>|/
-  
-  const std::string& uri = getRequest()->getUri();
-  
-  A2_LOG_INFO(fmt("CUID#%" PRId64 " - Processing ED2K link: %s",
-                  getCuid(), uri.c_str()));
-  
-  // Parse the ED2K link using Ed2kHelper
-  Ed2kFileInfo fileInfo;
-  if (!Ed2kHelper::parseLink(uri, fileInfo)) {
-    throw DL_ABORT_EX(
-        fmt("Failed to parse ED2K link: %s", uri.c_str()));
-  }
-  
-  A2_LOG_INFO(fmt("CUID#%" PRId64 " - ED2K file: %s, size: %" PRId64 ", hash: %s",
-                  getCuid(), fileInfo.filename.c_str(),
-                  fileInfo.filesize, fileInfo.filehash.c_str()));
-  
-  // Set up the file entry with the ED2K file information
-  getFileEntry()->setPath(fileInfo.filename);
-  getFileEntry()->setLength(fileInfo.filesize);
-  
-  // Determine which ED2K servers to connect to
-  std::vector<Ed2kServerEntry> servers;
-  
-  if (!fileInfo.serverAddr.empty() && fileInfo.serverPort > 0) {
-    // Use the server specified in the link
-    Ed2kServerEntry server;
-    server.addr = fileInfo.serverAddr;
-    server.port = fileInfo.serverPort;
-    servers.push_back(server);
-    A2_LOG_INFO(fmt("CUID#%" PRId64 " - Using ED2K server from link: %s:%u",
-                    getCuid(), server.addr.c_str(), server.port));
-  }
-  
-  // If no server was specified in the link, use default servers
-  if (servers.empty()) {
-    Ed2kHelper::getDefaultServers(servers);
-    A2_LOG_INFO(fmt("CUID#%" PRId64 " - Using %lu default ED2K servers",
-                    getCuid(), static_cast<unsigned long>(servers.size())));
-  }
-  
-  // Try to connect to each server until we find one that responds
-  bool connected = false;
-  std::shared_ptr<SocketCore> serverSocket;
-  std::string connectedAddr;
-  uint16_t connectedPort = 0;
-  
-  for (const auto& server : servers) {
-    A2_LOG_INFO(fmt("CUID#%" PRId64 " - Attempting to connect to ED2K server %s:%u",
-                    getCuid(), server.addr.c_str(), server.port));
+  try {
+    // ED2K links are of the form:
+    // ed2k://|file|<filename>|<filesize>|<filehash>|/
+    // or with optional server hint: ...|p=<server_ip>:<server_port>|/
     
-    try {
-      createSocket();
-      getSocket()->establishConnection(server.addr, server.port);
-      getSocket()->setBlockingMode();
+    const std::string& uri = getRequest()->getUri();
+    
+    A2_LOG_INFO(fmt("CUID#%" PRId64 " - Processing ED2K link: %s",
+                    getCuid(), uri.c_str()));
+    
+    // Parse the ED2K link using Ed2kHelper
+    Ed2kFileInfo fileInfo;
+    if (!Ed2kHelper::parseLink(uri, fileInfo)) {
+      A2_LOG_ERROR(fmt("CUID#%" PRId64 " - Failed to parse ED2K link: %s",
+                       getCuid(), uri.c_str()));
+      getRequestGroup()->setLastErrorCode(error_code::UNKNOWN_ERROR,
+                                          "Failed to parse ED2K link");
+      return true;
+    }
+    
+    A2_LOG_INFO(fmt("CUID#%" PRId64 " - ED2K file: %s, size: %" PRId64
+                    ", hash: %s",
+                    getCuid(), fileInfo.filename.c_str(),
+                    fileInfo.filesize, fileInfo.filehash.c_str()));
+    
+    // Set up the file entry with the ED2K file information
+    getFileEntry()->setPath(fileInfo.filename);
+    getFileEntry()->setLength(fileInfo.filesize);
+    
+    // Determine which ED2K servers to connect to
+    std::vector<Ed2kServerEntry> servers;
+    
+    if (!fileInfo.serverAddr.empty() && fileInfo.serverPort > 0) {
+      // Use the server specified in the link
+      Ed2kServerEntry server;
+      server.addr = fileInfo.serverAddr;
+      server.port = fileInfo.serverPort;
+      servers.push_back(server);
+      A2_LOG_INFO(fmt("CUID#%" PRId64 " - Using ED2K server from link: %s:%u",
+                      getCuid(), server.addr.c_str(), server.port));
+    }
+    
+    // If no server was specified in the link, use default servers
+    if (servers.empty()) {
+      Ed2kHelper::getDefaultServers(servers);
+      A2_LOG_INFO(fmt("CUID#%" PRId64 " - Using %lu default ED2K servers",
+                      getCuid(),
+                      static_cast<unsigned long>(servers.size())));
+    }
+    
+    // Try to connect to each server until we find one that responds
+    // Only establish TCP connection — no ED2K protocol exchange here.
+    // The Ed2kDownloadCommand will handle the full ED2K protocol (handshake,
+    // file search, etc.) from scratch on the connected socket.
+    bool connected = false;
+    std::shared_ptr<SocketCore> serverSocket;
+    std::string connectedAddr;
+    uint16_t connectedPort = 0;
+    
+    for (const auto& server : servers) {
+      A2_LOG_INFO(fmt("CUID#%" PRId64
+                      " - Attempting to connect to ED2K server %s:%u",
+                      getCuid(), server.addr.c_str(), server.port));
       
-      // Send ED2K login handshake
-      if (Ed2kHelper::sendLoginHandshake(getSocket(), getOption())) {
-        // Send search request for the file
-        if (Ed2kHelper::searchFile(getSocket(), fileInfo)) {
-          serverSocket = getSocket();
-          connectedAddr = server.addr;
-          connectedPort = server.port;
-          connected = true;
-          A2_LOG_INFO(fmt("CUID#%" PRId64 " - Successfully connected to ED2K server %s:%u",
-                          getCuid(), server.addr.c_str(), server.port));
-          break;
-        }
+      try {
+        createSocket();
+        getSocket()->establishConnection(server.addr, server.port);
+        
+        serverSocket = getSocket();
+        connectedAddr = server.addr;
+        connectedPort = server.port;
+        connected = true;
+        A2_LOG_INFO(fmt("CUID#%" PRId64
+                        " - TCP connected to ED2K server %s:%u",
+                        getCuid(), server.addr.c_str(), server.port));
+        break;
       }
-      
-      getSocket()->closeConnection();
+      catch (RecoverableException& ex) {
+        A2_LOG_INFO_EX(
+            fmt("CUID#%" PRId64 " - Failed to connect to ED2K server %s:%u",
+                getCuid(), server.addr.c_str(), server.port),
+            ex);
+        // Try the next server
+      }
     }
-    catch (RecoverableException& ex) {
-      A2_LOG_INFO_EX(fmt("CUID#%" PRId64 " - Failed to connect to ED2K server %s:%u",
-                         getCuid(), server.addr.c_str(), server.port),
-                     ex);
-      // Try the next server
+    
+    if (!connected) {
+      A2_LOG_ERROR(
+          fmt("CUID#%" PRId64 " - Failed to connect to any ED2K server",
+              getCuid()));
+      getRequestGroup()->setLastErrorCode(error_code::UNKNOWN_ERROR,
+                                          "Failed to connect to any ED2K server");
+      return true;
     }
+    
+    // Create Ed2kDownloadCommand to handle the full ED2K protocol
+    // (handshake, file search, data download) on the connected socket.
+    auto c = make_unique<Ed2kDownloadCommand>(
+        getCuid(), getRequest(), getFileEntry(), getRequestGroup(),
+        getDownloadEngine(), serverSocket);
+    
+    c->setFileHash(fileInfo.filehash);
+    c->setFileSize(fileInfo.filesize);
+    c->setStatus(Command::STATUS_ONESHOT_REALTIME);
+    getDownloadEngine()->setNoWait(true);
+    getDownloadEngine()->addCommand(std::move(c));
+    
+    return true;
   }
-  
-  if (!connected) {
-    throw DL_ABORT_EX(
-        fmt("CUID#%" PRId64 " - Failed to connect to any ED2K server",
-            getCuid()));
+  catch (RecoverableException& e) {
+    A2_LOG_ERROR_EX(fmt("CUID#%" PRId64 " - ED2K download error: %s",
+                        getCuid(), getRequest()->getUri().c_str()),
+                    e);
+    getRequestGroup()->setLastErrorCode(error_code::UNKNOWN_ERROR, e.what());
+    return true;
   }
-  
-  // Search for sources (other clients) that have the file
-  A2_LOG_INFO(fmt("CUID#%" PRId64 " - Searching for ED2K file sources...",
-                  getCuid()));
-  
-  std::vector<Ed2kSourceEntry> sources;
-  if (!Ed2kHelper::getFileSources(serverSocket, fileInfo, sources)) {
-    A2_LOG_INFO(fmt("CUID#%" PRId64 " - No sources found for ED2K file, will retry later",
-                    getCuid()));
+  catch (std::exception& e) {
+    A2_LOG_ERROR(fmt("CUID#%" PRId64
+                     " - ED2K unexpected error: %s",
+                     getCuid(), e.what()));
+    getRequestGroup()->setLastErrorCode(error_code::UNKNOWN_ERROR, e.what());
+    return true;
   }
-  
-  A2_LOG_INFO(fmt("CUID#%" PRId64 " - Found %lu sources for ED2K file",
-                  getCuid(), static_cast<unsigned long>(sources.size())));
-  
-  // Create Ed2kDownloadCommand to start downloading
-  // Constructor takes 7 params: cuid, req, fileEntry, requestGroup, e, s
-  auto c = make_unique<Ed2kDownloadCommand>(
-      getCuid(), getRequest(), getFileEntry(), getRequestGroup(),
-      getDownloadEngine(), serverSocket);
-  
-  c->setFileHash(fileInfo.filehash);
-  c->setFileSize(fileInfo.filesize);
-  c->setStatus(Command::STATUS_ONESHOT_REALTIME);
-  getDownloadEngine()->setNoWait(true);
-  getDownloadEngine()->addCommand(std::move(c));
-  
-  return true;
 }
 
 } // namespace aria2

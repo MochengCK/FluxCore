@@ -41,6 +41,7 @@
 #include <algorithm>
 #include <numeric>
 #include <iterator>
+#include <stdexcept>
 
 #include "StatCalc.h"
 #include "RequestGroup.h"
@@ -133,12 +134,27 @@ void executeCommand(std::deque<std::unique_ptr<Command>>& commands,
       continue;
     }
     com->transitStatus();
-    if (com->execute()) {
+    try {
+      if (com->execute()) {
+        com.reset();
+      }
+      else {
+        com->clearIOEvents();
+        com.release();
+      }
+    }
+    catch (RecoverableException& e) {
+      A2_LOG_ERROR_EX(fmt("Command CUID#%" PRId64
+                          " failed with recoverable error: %s",
+                          com->getCuid(), e.what()),
+                      e);
       com.reset();
     }
-    else {
-      com->clearIOEvents();
-      com.release();
+    catch (std::exception& e) {
+      A2_LOG_ERROR(fmt("Command CUID#%" PRId64
+                       " failed with unexpected error: %s",
+                       com->getCuid(), e.what()));
+      com.reset();
     }
   }
 }
