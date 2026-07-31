@@ -165,7 +165,7 @@ bool Ed2kDownloadCommand::execute()
     }
   }
   catch (DlAbortEx& err) {
-    requestGroup_->setLastErrorCode(err.getErrorCode(), err.what());
+    getRequestGroup()->setLastErrorCode(err.getErrorCode(), err.what());
     A2_LOG_ERROR_EX(fmt("CUID#%" PRId64 " - ED2K download aborted: %s",
                         getCuid(), getRequest()->getUri().c_str()),
                     err);
