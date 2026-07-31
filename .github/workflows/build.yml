@@ -422,9 +422,9 @@ jobs:
       env:
         PREFIX: /tmp/flux-deps-${{ matrix.arch }}
       run: |
-        export CFLAGS="-arch ${{ matrix.target_arch }} -Os -ffunction-sections -fdata-sections -I$PREFIX/include"
-        export CXXFLAGS="-arch ${{ matrix.target_arch }} -Os -ffunction-sections -fdata-sections -I$PREFIX/include"
-        export LDFLAGS="-arch ${{ matrix.target_arch }} -Wl,-dead_strip -L$PREFIX/lib"
+        export CFLAGS="-arch ${{ matrix.target_arch }} -mmacosx-version-min=15.0 -Os -ffunction-sections -fdata-sections -I$PREFIX/include"
+        export CXXFLAGS="-arch ${{ matrix.target_arch }} -mmacosx-version-min=15.0 -Os -ffunction-sections -fdata-sections -I$PREFIX/include"
+        export LDFLAGS="-arch ${{ matrix.target_arch }} -mmacosx-version-min=15.0 -Wl,-dead_strip -L$PREFIX/lib"
         export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig"
         ./configure \
           --without-openssl --without-gnutls --with-appletls \
