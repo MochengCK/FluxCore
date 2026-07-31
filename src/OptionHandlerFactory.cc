@@ -2006,6 +2006,105 @@ std::vector<OptionHandler*> OptionHandlerFactory::createOptionHandlers()
     handlers.push_back(op);
   }
 
+  // === ED2K (eDonkey2000) Options ===
+  // These must be registered here so the engine accepts --ed2k-* on the
+  // command line / via changeGlobalOption. Ed2kDownloadCommand reads them
+  // through getOption() at runtime to configure source discovery.
+  {
+    OptionHandler* op(new BooleanOptionHandler(PREF_ENABLE_ED2K,
+                                               TEXT_ED2K_ENABLED, A2_V_TRUE,
+                                               OptionHandler::OPT_ARG));
+    op->addTag(TAG_BASIC);
+    op->addTag(TAG_EXPERIMENTAL);
+    op->setInitialOption(true);
+    op->setChangeGlobalOption(true);
+    handlers.push_back(op);
+  }
+  {
+    OptionHandler* op(new NumberOptionHandler(PREF_ED2K_LISTEN_PORT,
+                                               TEXT_ED2K_LISTEN_PORT, "4662",
+                                               1, UINT16_MAX));
+    op->addTag(TAG_BASIC);
+    op->addTag(TAG_EXPERIMENTAL);
+    op->setInitialOption(true);
+    op->setChangeGlobalOption(true);
+    handlers.push_back(op);
+  }
+  {
+    OptionHandler* op(new NumberOptionHandler(PREF_ED2K_MAX_CONNECTIONS,
+                                               TEXT_ED2K_MAX_CONNECTIONS,
+                                               "200", 1, 1000));
+    op->addTag(TAG_EXPERIMENTAL);
+    op->setInitialOption(true);
+    op->setChangeGlobalOption(true);
+    handlers.push_back(op);
+  }
+  {
+    OptionHandler* op(new NumberOptionHandler(PREF_ED2K_CONNECTION_TIMEOUT,
+                                               TEXT_ED2K_CONNECTION_TIMEOUT,
+                                               "30", 5, 300));
+    op->addTag(TAG_EXPERIMENTAL);
+    op->setInitialOption(true);
+    op->setChangeGlobalOption(true);
+    handlers.push_back(op);
+  }
+  {
+    OptionHandler* op(new NumberOptionHandler(PREF_ED2K_MAX_SOURCES_PER_FILE,
+                                               TEXT_ED2K_MAX_SOURCES_PER_FILE,
+                                               "100", 1, 10000));
+    op->addTag(TAG_EXPERIMENTAL);
+    op->setInitialOption(true);
+    op->setChangeGlobalOption(true);
+    handlers.push_back(op);
+  }
+  {
+    OptionHandler* op(new BooleanOptionHandler(
+        PREF_ED2K_SERVER_SOURCE_ENABLED, TEXT_ED2K_SERVER_SOURCE_ENABLED,
+        A2_V_TRUE, OptionHandler::OPT_ARG));
+    op->addTag(TAG_EXPERIMENTAL);
+    op->setInitialOption(true);
+    op->setChangeGlobalOption(true);
+    handlers.push_back(op);
+  }
+  {
+    OptionHandler* op(new BooleanOptionHandler(
+        PREF_ED2K_SOURCE_EXCHANGE_ENABLED,
+        TEXT_ED2K_SOURCE_EXCHANGE_ENABLED, A2_V_TRUE,
+        OptionHandler::OPT_ARG));
+    op->addTag(TAG_EXPERIMENTAL);
+    op->setInitialOption(true);
+    op->setChangeGlobalOption(true);
+    handlers.push_back(op);
+  }
+  {
+    OptionHandler* op(new NumberOptionHandler(
+        PREF_ED2K_SOURCE_EXCHANGE_INTERVAL,
+        TEXT_ED2K_SOURCE_EXCHANGE_INTERVAL, "300", 30, 3600));
+    op->addTag(TAG_EXPERIMENTAL);
+    op->setInitialOption(true);
+    op->setChangeGlobalOption(true);
+    handlers.push_back(op);
+  }
+  {
+    OptionHandler* op(new BooleanOptionHandler(PREF_ED2K_KAD_ENABLED,
+                                               TEXT_ED2K_KAD_ENABLED,
+                                               A2_V_FALSE,
+                                               OptionHandler::OPT_ARG));
+    op->addTag(TAG_EXPERIMENTAL);
+    op->setInitialOption(true);
+    op->setChangeGlobalOption(true);
+    handlers.push_back(op);
+  }
+  {
+    OptionHandler* op(new DefaultOptionHandler(PREF_ED2K_KAD_BOOTSTRAP_NODES,
+                                               TEXT_ED2K_KAD_BOOTSTRAP_NODES,
+                                               NO_DEFAULT_VALUE));
+    op->addTag(TAG_EXPERIMENTAL);
+    op->setInitialOption(true);
+    op->setChangeGlobalOption(true);
+    handlers.push_back(op);
+  }
+
   return handlers;
 }
 

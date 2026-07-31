@@ -1140,4 +1140,26 @@
     "                              successful, then skip downloading metadata from\n" \
     "                              DHT.")
 
+// ED2K (eDonkey2000) options
+#define TEXT_ED2K_ENABLED \
+  _(" --ed2k-enabled[=true|false]  Enable ED2K (eDonkey2000) protocol support.")
+#define TEXT_ED2K_LISTEN_PORT \
+  _(" --ed2k-listen-port=PORT      Set TCP/UDP port number for ED2K downloads.")
+#define TEXT_ED2K_MAX_CONNECTIONS \
+  _(" --ed2k-max-connections=NUM   Maximum number of concurrent ED2K connections.")
+#define TEXT_ED2K_CONNECTION_TIMEOUT \
+  _(" --ed2k-connection-timeout=SEC  Connection timeout for ED2K peers (seconds).")
+#define TEXT_ED2K_MAX_SOURCES_PER_FILE \
+  _(" --ed2k-max-sources-per-file=NUM  Maximum number of sources tracked per file.")
+#define TEXT_ED2K_SERVER_SOURCE_ENABLED \
+  _(" --ed2k-server-source-enabled[=true|false]  Use ED2K servers for source discovery.")
+#define TEXT_ED2K_SOURCE_EXCHANGE_ENABLED \
+  _(" --ed2k-source-exchange-enabled[=true|false]  Exchange sources with connected peers.")
+#define TEXT_ED2K_SOURCE_EXCHANGE_INTERVAL \
+  _(" --ed2k-source-exchange-interval=SEC  Base interval for source exchange (seconds).")
+#define TEXT_ED2K_KAD_ENABLED \
+  _(" --ed2k-kad-enabled[=true|false]  Use KAD (Kademlia DHT) for source discovery.")
+#define TEXT_ED2K_KAD_BOOTSTRAP_NODES \
+  _(" --ed2k-kad-bootstrap-nodes=LIST  Comma-separated KAD bootstrap nodes (host:port).")
+
 // clang-format on
