@@ -36,7 +36,6 @@
 
 #include <cstring>
 #include <vector>
-#include <arpa/inet.h>
 
 #include "Request.h"
 #include "SocketCore.h"
