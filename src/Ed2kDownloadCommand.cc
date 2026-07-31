@@ -1045,7 +1045,11 @@ void Ed2kDownloadCommand::updateProgress()
 {
   try {
     auto ps = getRequestGroup()->getPieceStorage();
-    if (ps) {
+    if (!ps) {
+      return;
+    }
+    auto dc = getDownloadContext();
+    if (dc && dc->getPieceLength() > 0) {
       // markPiecesDone sets the bitfield for all pieces up to
       // downloadedLength_, which matches ED2K's sequential download order.
       ps->markPiecesDone(downloadedLength_);

@@ -108,8 +108,12 @@ bool Ed2kInitiateConnectionCommand::execute()
                     getCuid(), fileInfo.filename.c_str(),
                     fileInfo.filesize, fileInfo.filehash.c_str()));
     
-    // Set up the file entry with the ED2K file information
-    getFileEntry()->setPath(fileInfo.filename);
+    // Set up the file entry with the ED2K file information.
+    // Apply the user-configured download directory (PREF_DIR) so the file
+    // lands in the same place as normal HTTP/BT downloads.
+    const std::string& dir = getOption()->get(PREF_DIR);
+    getFileEntry()->setPath(util::applyDir(dir, fileInfo.filename));
+    getFileEntry()->setSuffixPath(fileInfo.filename);
     getFileEntry()->setLength(fileInfo.filesize);
 
     // The engine skips PieceStorage initialization when getTotalLength()==0
@@ -118,6 +122,11 @@ bool Ed2kInitiateConnectionCommand::execute()
     // Ed2kDownloadCommand can write to disk and report progress.
     auto dc = getRequestGroup()->getDownloadContext();
     if (dc) {
+      // Set piece length before initPieceStorage — pieceLength_ defaults to 0
+      // and DefaultPieceStorage/BitfieldMan divide by blockLength in
+      // markPiecesDone(), causing a division-by-zero crash if left at 0.
+      // Use 1MB (the aria2 default) for progress tracking granularity.
+      dc->setPieceLength(1048576);
       dc->markTotalLengthIsKnown();
     }
     getRequestGroup()->initPieceStorage();
