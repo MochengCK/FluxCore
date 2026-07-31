@@ -104,6 +104,7 @@ Ed2kDownloadCommand::Ed2kDownloadCommand(
       serverPort_(0),
       currentSourceIndex_(0),
       downloadOffset_(0),
+      lastMarkedLength_(0),
       loginSent_(false),
       sourcesRequested_(false),
       helloSent_(false),
@@ -1049,10 +1050,25 @@ void Ed2kDownloadCommand::updateProgress()
       return;
     }
     auto dc = getDownloadContext();
-    if (dc && dc->getPieceLength() > 0) {
-      // markPiecesDone sets the bitfield for all pieces up to
-      // downloadedLength_, which matches ED2K's sequential download order.
+    if (!dc || dc->getPieceLength() == 0) {
+      return;
+    }
+
+    // markPiecesDone() creates a Piece object for the partial piece and
+    // calls addUsedPiece().  Calling it repeatedly with the same
+    // downloadedLength_ creates duplicate Piece entries in usedPieces_,
+    // which triggers "Found duplicate cache entry" warnings and a
+    // Piece::initWrCache assertion crash.
+    //
+    // Only call markPiecesDone() when downloadedLength_ has advanced past
+    // a piece boundary (i.e. at least one piece length of new data).
+    size_t pieceLen = dc->getPieceLength();
+    size_t lastPiece = static_cast<size_t>(lastMarkedLength_ / pieceLen);
+    size_t curPiece = static_cast<size_t>(downloadedLength_ / pieceLen);
+
+    if (curPiece > lastPiece) {
       ps->markPiecesDone(downloadedLength_);
+      lastMarkedLength_ = downloadedLength_;
     }
   }
   catch (RecoverableException& e) {

@@ -118,6 +118,7 @@ private:
 
   // --- Download progress ---
   int64_t downloadOffset_;  // Current byte offset in the file
+  int64_t lastMarkedLength_;  // Last length passed to markPiecesDone()
 
   // --- Message-sent flags (prevent re-sending on execute() re-entry) ---
   bool loginSent_;

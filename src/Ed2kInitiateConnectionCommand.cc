@@ -84,16 +84,35 @@ std::unique_ptr<Command> Ed2kInitiateConnectionCommand::createNextCommand(
 
 bool Ed2kInitiateConnectionCommand::execute()
 {
+  // ED2K uses a single P2P connection — the protocol handles multi-source
+  // downloading internally. Force numConcurrentCommand to 1 to prevent
+  // RequestGroup from spawning PREF_SPLIT (often 32) parallel
+  // CreateRequestCommands, each of which would create an
+  // Ed2kInitiateConnectionCommand → Ed2kDownloadCommand. Multiple
+  // Ed2kDownloadCommands writing to the same PieceStorage cause
+  // "Found duplicate cache entry" assertion crashes in Piece::initWrCache.
+  getRequestGroup()->setNumConcurrentCommand(1);
+
+  // If another Ed2kInitiateConnectionCommand already created an
+  // Ed2kDownloadCommand for this RequestGroup, don't create another.
+  // getNumConnection() counts active stream connections; this command
+  // itself counts as 1, so >1 means a download command is already running.
+  if (getRequestGroup()->getNumConnection() > 1) {
+    A2_LOG_INFO(fmt("CUID#%" PRId64 " - ED2K: download already active,"
+                    " skipping duplicate command", getCuid()));
+    return true;
+  }
+
   try {
     // ED2K links are of the form:
     // ed2k://|file|<filename>|<filesize>|<filehash>|/
     // or with optional server hint: ...|p=<server_ip>:<server_port>|/
-    
+
     const std::string& uri = getRequest()->getUri();
-    
+
     A2_LOG_INFO(fmt("CUID#%" PRId64 " - Processing ED2K link: %s",
                     getCuid(), uri.c_str()));
-    
+
     // Parse the ED2K link using Ed2kHelper
     Ed2kFileInfo fileInfo;
     if (!Ed2kHelper::parseLink(uri, fileInfo)) {
@@ -103,12 +122,26 @@ bool Ed2kInitiateConnectionCommand::execute()
                                           "Failed to parse ED2K link");
       return true;
     }
-    
+
     A2_LOG_INFO(fmt("CUID#%" PRId64 " - ED2K file: %s, size: %" PRId64
                     ", hash: %s",
                     getCuid(), fileInfo.filename.c_str(),
                     fileInfo.filesize, fileInfo.filehash.c_str()));
-    
+
+    // Check if PieceStorage is already initialized. This happens when
+    // the download is resumed after pause: RequestGroup::initiateDownload()
+    // sees getTotalLength() > 0 (set during the first run) and calls
+    // initPieceStorage() via the file-allocation path before any
+    // Ed2kInitiateConnectionCommand runs. Re-calling initPieceStorage()
+    // would replace the existing PieceStorage, losing disk adaptor state.
+    bool pieceStorageReady = false;
+    {
+      auto existingPs = getRequestGroup()->getPieceStorage();
+      if (existingPs && existingPs->getDiskAdaptor()) {
+        pieceStorageReady = true;
+      }
+    }
+
     // Set up the file entry with the ED2K file information.
     // Apply the user-configured download directory (PREF_DIR) so the file
     // lands in the same place as normal HTTP/BT downloads.
@@ -117,51 +150,47 @@ bool Ed2kInitiateConnectionCommand::execute()
     getFileEntry()->setSuffixPath(fileInfo.filename);
     getFileEntry()->setLength(fileInfo.filesize);
 
-    // The engine skips PieceStorage initialization when getTotalLength()==0
-    // (which is the case for ED2K links before parsing). Now that we know
-    // the file size, mark it as known and initialize PieceStorage so that
-    // Ed2kDownloadCommand can write to disk and report progress.
-    auto dc = getRequestGroup()->getDownloadContext();
-    if (dc) {
+    if (!pieceStorageReady) {
+      // First run: PieceStorage not yet initialized.
       // Set piece length before initPieceStorage — pieceLength_ defaults to 0
       // and DefaultPieceStorage/BitfieldMan divide by blockLength in
       // markPiecesDone(), causing a division-by-zero crash if left at 0.
       // Use 1MB (the aria2 default) for progress tracking granularity.
-      dc->setPieceLength(1048576);
-      dc->markTotalLengthIsKnown();
-    }
-    getRequestGroup()->initPieceStorage();
-    try {
-      auto ps = getRequestGroup()->getPieceStorage();
-      if (ps && ps->getDiskAdaptor()) {
-        // Create and set the progress info file (.aria2 control file)
-        // so that saveControlFile() works during shutdown and progress
-        // can be resumed on restart.
-        auto progressInfoFile = std::make_shared<DefaultBtProgressInfoFile>(
-            dc, ps, getOption().get());
-        getRequestGroup()->setProgressInfoFile(progressInfoFile);
+      auto dc = getRequestGroup()->getDownloadContext();
+      if (dc) {
+        dc->setPieceLength(1048576);
+        dc->markTotalLengthIsKnown();
+      }
+      getRequestGroup()->initPieceStorage();
+      try {
+        auto ps = getRequestGroup()->getPieceStorage();
+        if (ps && ps->getDiskAdaptor()) {
+          // Remove any stale .aria2 control file from a previous crashed run.
+          // DefaultBtProgressInfoFile::load() on a stale/corrupt file creates
+          // invalid Piece objects that trigger a Piece::initWrCache assertion
+          // crash. ED2K downloads always start fresh — resume is handled by
+          // the session serializer (URI + options), not piece-level control.
+          auto progressInfoFile = std::make_shared<DefaultBtProgressInfoFile>(
+              dc, ps, getOption().get());
+          if (progressInfoFile->exists()) {
+            A2_LOG_INFO(fmt("CUID#%" PRId64
+                            " - ED2K: removing stale control file",
+                            getCuid()));
+            progressInfoFile->removeFile();
+          }
 
-        // Load existing progress if .aria2 file exists (restart scenario).
-        // Do NOT call save() here — it would create the file and make
-        // exists() return true, causing openExistingFile() to fail on
-        // a file that doesn't exist yet (first-time download).
-        if (progressInfoFile->exists()) {
-          progressInfoFile->load();
-          ps->getDiskAdaptor()->openExistingFile();
-        }
-        else {
           ps->getDiskAdaptor()->openFile();
         }
       }
-    }
-    catch (RecoverableException& e) {
-      A2_LOG_ERROR_EX(fmt("CUID#%" PRId64
-                          " - ED2K: failed to open disk file: %s",
-                          getCuid(), e.what()),
-                      e);
-      getRequestGroup()->setLastErrorCode(error_code::FILE_IO_ERROR,
-                                          e.what());
-      return true;
+      catch (RecoverableException& e) {
+        A2_LOG_ERROR_EX(fmt("CUID#%" PRId64
+                            " - ED2K: failed to open disk file: %s",
+                            getCuid(), e.what()),
+                        e);
+        getRequestGroup()->setLastErrorCode(error_code::FILE_IO_ERROR,
+                                            e.what());
+        return true;
+      }
     }
 
     // Determine which ED2K servers to connect to
