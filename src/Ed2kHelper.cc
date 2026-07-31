@@ -365,6 +365,56 @@ bool Ed2kHelper::parseLink(const std::string& uri, Ed2kFileInfo& info)
   info.filename = linkInfo->name;
   info.filesize = linkInfo->size;
   info.filehash = linkInfo->hash;
+  info.serverAddr.clear();
+  info.serverPort = 0;
+
+  // Parse optional params from the link: p=<ip>:<port> (server hint)
+  // and s=<ip>:<port> (source peers). These appear after the hash field,
+  // separated by '|'. Example:
+  //   ed2k://|file|name|size|hash|p=1.2.3.4:4661|/
+  std::vector<std::string> parts;
+  size_t start = 0;
+  size_t end;
+  while ((end = uri.find('|', start)) != std::string::npos) {
+    parts.push_back(uri.substr(start, end - start));
+    start = end + 1;
+  }
+  if (start < uri.size()) {
+    parts.push_back(uri.substr(start));
+  }
+
+  // parts[5..] are optional params (hash is parts[4])
+  for (size_t i = 5; i < parts.size(); ++i) {
+    const std::string& token = parts[i];
+    if (token.empty() || token == "/") {
+      continue;
+    }
+    // Server hint: p=ip:port
+    if (token.substr(0, 2) == "p=") {
+      std::string addrPort = token.substr(2);
+      size_t colon = addrPort.rfind(':');
+      if (colon != std::string::npos && colon > 0) {
+        std::string addr = addrPort.substr(0, colon);
+        std::string portStr = addrPort.substr(colon + 1);
+        // Strip trailing '/' if present
+        if (!portStr.empty() && portStr.back() == '/') {
+          portStr.pop_back();
+        }
+        int port = 0;
+        try {
+          port = std::stoi(portStr);
+        }
+        catch (...) {
+          continue;
+        }
+        if (port > 0 && port <= 65535) {
+          info.serverAddr = addr;
+          info.serverPort = static_cast<uint16_t>(port);
+        }
+      }
+    }
+  }
+
   return true;
 }
 

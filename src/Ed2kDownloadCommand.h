@@ -69,24 +69,53 @@ private:
     FAILURE
   };
 
+  // Sub-states within the DOWNLOADING phase. Because the socket is
+  // non-blocking, execute() may return false mid-chunk; these sub-states
+  // ensure we resume correctly without re-sending protocol messages.
+  enum class DownloadSubState {
+    REQUEST_UPLOAD,      // Need to send START_UPLOAD_REQ for current chunk
+    WAIT_ACCEPT_UPLOAD,  // Waiting for ACCEPT_UPLOAD_REQ
+    RECEIVING_DATA,      // Receiving SENDING_PART frames for the chunk
+    CHUNK_COMPLETE       // Chunk done, advance to next
+  };
+
   std::string fileHash_;
   uint64_t fileSize_;
   int64_t downloadedLength_;
   std::shared_ptr<SocketCore> socket_;
   Ed2kState state_;
+  DownloadSubState downloadSubState_;
   int currentChunk_;
   int totalChunks_;
+  // Track whether the outgoing request for each phase has been queued,
+  // so re-entry into execute() doesn't re-send it and corrupt the stream.
+  bool handshakeSent_;
+  bool fileRequestSent_;
+
+  // Persistent I/O buffers — survive across execute() calls so that
+  // partial reads/writes (EAGAIN) don't desynchronize the protocol stream.
+  std::vector<unsigned char> sendBuffer_;
+  std::vector<unsigned char> recvBuffer_;
+  // Accumulator for the current chunk's data during download.
+  std::vector<unsigned char> currentChunkData_;
 
   bool handshake();
   bool requestFileInfo();
-  bool startDownload();
   bool receiveData();
   bool verifyChunkMd4(int chunkIndex, const unsigned char* data, size_t len);
   bool writeChunkToDisk(int chunkIndex, const unsigned char* data, size_t len);
-  bool sendEd2kMessage(unsigned char msgType, const unsigned char* payload,
-                       size_t payloadLen);
-  bool recvEd2kMessage(unsigned char& msgType,
-                       std::vector<unsigned char>& payload);
+
+  // Append a complete ED2K message (length + type + payload) to sendBuffer_.
+  void queueMessage(unsigned char msgType, const unsigned char* payload,
+                    size_t payloadLen);
+  // Write as much of sendBuffer_ as the socket accepts. Returns true when
+  // the buffer is fully flushed.
+  bool flushSendBuffer();
+  // Read available data into recvBuffer_ and, if a complete message is
+  // present, extract it into msgType/payload. Returns true on success,
+  // false if no complete message is available yet.
+  bool tryReceiveMessage(unsigned char& msgType,
+                         std::vector<unsigned char>& payload);
 };
 
 } // namespace aria2

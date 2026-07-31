@@ -54,6 +54,9 @@
 #include "fmt.h"
 #include "FileEntry.h"
 #include "RequestGroup.h"
+#include "DownloadContext.h"
+#include "PieceStorage.h"
+#include "DiskAdaptor.h"
 #include "A2STR.h"
 
 namespace aria2 {
@@ -108,7 +111,32 @@ bool Ed2kInitiateConnectionCommand::execute()
     // Set up the file entry with the ED2K file information
     getFileEntry()->setPath(fileInfo.filename);
     getFileEntry()->setLength(fileInfo.filesize);
-    
+
+    // The engine skips PieceStorage initialization when getTotalLength()==0
+    // (which is the case for ED2K links before parsing). Now that we know
+    // the file size, mark it as known and initialize PieceStorage so that
+    // Ed2kDownloadCommand can write to disk and report progress.
+    auto dc = getRequestGroup()->getDownloadContext();
+    if (dc) {
+      dc->markTotalLengthIsKnown();
+    }
+    getRequestGroup()->initPieceStorage();
+    try {
+      auto ps = getRequestGroup()->getPieceStorage();
+      if (ps && ps->getDiskAdaptor()) {
+        ps->getDiskAdaptor()->openFile();
+      }
+    }
+    catch (RecoverableException& e) {
+      A2_LOG_ERROR_EX(fmt("CUID#%" PRId64
+                          " - ED2K: failed to open disk file: %s",
+                          getCuid(), e.what()),
+                      e);
+      getRequestGroup()->setLastErrorCode(error_code::FILE_IO_ERROR,
+                                          e.what());
+      return true;
+    }
+
     // Determine which ED2K servers to connect to
     std::vector<Ed2kServerEntry> servers;
     
