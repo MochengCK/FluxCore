@@ -35,6 +35,7 @@
 #include "InitiateConnectionCommandFactory.h"
 #include "HttpInitiateConnectionCommand.h"
 #include "FtpInitiateConnectionCommand.h"
+#include "Ed2kInitiateConnectionCommand.h"
 #include "Request.h"
 #include "RequestGroup.h"
 #include "DownloadEngine.h"
@@ -80,6 +81,10 @@ InitiateConnectionCommandFactory::createInitiateConnectionCommand(
                             req->getUri().c_str()));
     }
     return make_unique<FtpInitiateConnectionCommand>(cuid, req, fileEntry,
+                                                     requestGroup, e);
+  }
+  else if (req->getProtocol() == "ed2k") {
+    return make_unique<Ed2kInitiateConnectionCommand>(cuid, req, fileEntry,
                                                      requestGroup, e);
   }
   else {

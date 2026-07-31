@@ -1,8 +1,8 @@
 #                                               -*- Autoconf -*-
 # Process this file with autoconf to produce a configure script.
 #
-AC_PREREQ([2.67])
-AC_INIT([FluxCore],[1.2.4],[https://github.com/aria2/aria2/issues],[fluxcore],[https://aria2.github.io/])
+AC_PREREQ([2.69])
+AC_INIT([FluxCore],[1.3.0],[https://github.com/aria2/aria2/issues],[fluxcore],[https://aria2.github.io/])
 
 AC_CANONICAL_HOST
 AC_CANONICAL_TARGET
@@ -12,7 +12,7 @@ m4_ifdef([AM_SILENT_RULES], [AM_SILENT_RULES([yes])])
 
 AC_USE_SYSTEM_EXTENSIONS
 
-LT_PREREQ([2.2.6])
+LT_PREREQ([2.4.7])
 LT_INIT([disable-static])
 dnl See versioning rule:
 dnl  http://www.gnu.org/software/libtool/manual/html_node/Updating-version-info.html
@@ -203,7 +203,7 @@ fi
 # Checks for libraries.
 
 # Check availability of cppunit
-PKG_CHECK_MODULES([CPPUNIT], [cppunit >= 1.10.2],
+PKG_CHECK_MODULES([CPPUNIT], [cppunit >= 1.13.2],
                   [have_cppunit=yes], [have_cppunit=no])
 if test "x$have_cppunit" != "xyes"; then
   AC_MSG_WARN([$CPPUNIT_PKG_ERRORS])
@@ -211,7 +211,7 @@ fi
 
 # Check availability of libz
 if test "x$with_libz" = "xyes"; then
-  PKG_CHECK_MODULES([ZLIB], [zlib >= 1.2.3], [have_zlib=yes], [have_zlib=no])
+  PKG_CHECK_MODULES([ZLIB], [zlib >= 1.2.11], [have_zlib=yes], [have_zlib=no])
   if test "x$have_zlib" != "xyes"; then
     AC_MSG_WARN([$ZLIB_PKG_ERRORS])
     AC_CHECK_LIB([z], [zlibVersion], [have_zlib=yes], [have_zlib=no])
@@ -239,7 +239,7 @@ fi
 
 have_libuv=no
 if test "x$with_libuv" = "xyes"; then
-  PKG_CHECK_MODULES([LIBUV], [libuv >= 1.13],
+  PKG_CHECK_MODULES([LIBUV], [libuv >= 1.48.0],
                     [have_libuv=yes], [have_libuv=no])
   if test "x$have_libuv" = "xyes"; then
     AC_DEFINE([HAVE_LIBUV], [1], [Define to 1 if you have libuv.])
@@ -251,7 +251,7 @@ AM_CONDITIONAL([HAVE_LIBUV], [test "x$have_libuv" = "xyes"])
 
 have_libxml2=no
 if test "x$with_libxml2" = "xyes"; then
-  PKG_CHECK_MODULES([LIBXML2],[libxml-2.0 >= 2.6.24],[have_libxml2=yes],[have_libxml2=no])
+  PKG_CHECK_MODULES([LIBXML2],[libxml-2.0 >= 2.9.10],[have_libxml2=yes],[have_libxml2=no])
   if test "x$have_libxml2" = "xyes"; then
     AC_DEFINE([HAVE_LIBXML2], [1], [Define to 1 if you have libxml2.])
   elif test "x$with_libxml2_requested" = "xyes"; then
@@ -384,9 +384,9 @@ fi
 
 have_libgnutls=no
 if test "x$with_gnutls" = "xyes" && test "x$have_ssl" != "xyes"; then
-  # gnutls >= 2.8 doesn't have libgnutls-config anymore. We require
-  # 2.2.0 because we use gnutls_priority_set_direct()
-  PKG_CHECK_MODULES([LIBGNUTLS], [gnutls >= 2.2.0],
+  # gnutls >= 3.6 uses pkg-config for detection. We require
+  # 3.6.0 because we use gnutls_priority_set_direct()
+  PKG_CHECK_MODULES([LIBGNUTLS], [gnutls >= 3.6.0],
                     [have_libgnutls=yes], [have_libgnutls=no])
   if test "x$have_libgnutls" = "xyes"; then
     have_ssl=yes
@@ -405,7 +405,7 @@ fi
 
 have_openssl=no
 if test "x$with_openssl" = "xyes" && test "x$have_ssl" != "xyes"; then
-  PKG_CHECK_MODULES([OPENSSL], [openssl >= 0.9.8],
+  PKG_CHECK_MODULES([OPENSSL], [openssl >= 1.1.1],
                     [have_openssl=yes], [have_openssl=no])
   if test "x$have_openssl" = "xyes"; then
     have_ssl=yes
@@ -472,7 +472,7 @@ if test "x$have_openssl" != "xyes"; then
   if test "x$with_libgcrypt" = "xyes" &&
      test "x$have_nativetls" != "xyes" &&
      test "x$have_libnettle" != "xyes"; then
-    m4_ifdef([AM_PATH_LIBGCRYPT], [AM_PATH_LIBGCRYPT([1.2.4], [have_libgcrypt=yes])], [
+    m4_ifdef([AM_PATH_LIBGCRYPT], [AM_PATH_LIBGCRYPT([1.8.0], [have_libgcrypt=yes])], [
     AC_MSG_WARN([configure was generated without libgcrypt detection.  libgcrypt detection is disabled])
       LIBGCRYPT_CFLAGS=
       LIBGCRYPT_LIBS=
@@ -487,7 +487,7 @@ fi
 
 have_libssh2=no
 if test "x$with_libssh2" = "xyes"; then
-  PKG_CHECK_MODULES([LIBSSH2], [libssh2], [have_libssh2=yes], [have_libssh2=no])
+  PKG_CHECK_MODULES([LIBSSH2], [libssh2 >= 1.9.0], [have_libssh2=yes], [have_libssh2=no])
   if test "x$have_libssh2" = "xyes"; then
     AC_DEFINE([HAVE_LIBSSH2], [1], [Define to 1 if you have libssh2.])
 
@@ -737,7 +737,7 @@ fi
 
 # Checks for library functions.
 AM_GNU_GETTEXT([external])
-AM_GNU_GETTEXT_VERSION([0.19])
+AM_GNU_GETTEXT_VERSION([0.21])
 AC_FUNC_ERROR_AT_LINE
 AC_PROG_GCC_TRADITIONAL
 

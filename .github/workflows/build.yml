@@ -339,16 +339,16 @@ jobs:
         cd ..
 
         # ---- expat ----
-        curl -fsSL https://github.com/libexpat/libexpat/releases/download/R_2_6_4/expat-2.6.4.tar.gz | tar xz
-        cd expat-2.6.4
+        curl -fsSL https://github.com/libexpat/libexpat/releases/download/R_2_7_1/expat-2.7.1.tar.gz | tar xz
+        cd expat-2.7.1
         ./configure --enable-static --disable-shared --prefix="$PREFIX" \
           CFLAGS="$ARCHFLAG -Os" LDFLAGS="$ARCHFLAG"
         make -j$NCORES && make install
         cd ..
 
         # ---- sqlite3 ----
-        curl -fsSL https://www.sqlite.org/2025/sqlite-autoconf-3490100.tar.gz | tar xz
-        cd sqlite-autoconf-3490100
+        curl -fsSL https://www.sqlite.org/2026/sqlite-autoconf-3520000.tar.gz | tar xz
+        cd sqlite-autoconf-3520000
         ./configure --enable-static --disable-shared --prefix="$PREFIX" \
           CFLAGS="$ARCHFLAG -Os" LDFLAGS="$ARCHFLAG"
         make -j$NCORES && make install

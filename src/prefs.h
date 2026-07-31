@@ -523,6 +523,20 @@ extern PrefPtr PREF_BT_ENABLE_HOOK_AFTER_HASH_CHECK;
 extern PrefPtr PREF_BT_LOAD_SAVED_METADATA;
 
 /**
+ * ED2K related preferences
+ */
+// values: true | false
+extern PrefPtr PREF_ENABLE_ED2K;
+// values: 1*digit
+extern PrefPtr PREF_ED2K_LISTEN_PORT;
+// values: 1*digit
+extern PrefPtr PREF_ED2K_MAX_CONNECTIONS;
+// values: 1*digit
+extern PrefPtr PREF_ED2K_CONNECTION_TIMEOUT;
+// values: 1*digit
+extern PrefPtr PREF_ED2K_MAX_SOURCES_PER_FILE;
+
+/**
  * Metalink related preferences
  */
 // values: a string that your file system recognizes as a file name.

@@ -141,7 +141,7 @@ bool Platform::setUp()
 #  endif // !OPENSSL_101_API
 #endif   // HAVE_OPENSSL
 #ifdef HAVE_LIBGCRYPT
-  if (!gcry_check_version("1.2.4")) {
+  if (!gcry_check_version("1.8.0")) {
     throw DL_ABORT_EX("gcry_check_version() failed.");
   }
   gcry_control(GCRYCTL_DISABLE_SECMEM, 0);

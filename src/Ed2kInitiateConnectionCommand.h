@@ -32,39 +32,24 @@
  * files in the program, then also delete it here.
  */
 /* copyright --> */
-#ifndef D_PROTOCOL_DETECTOR_H
-#define D_PROTOCOL_DETECTOR_H
+#ifndef D_ED2K_INITIATE_CONNECTION_COMMAND_H
+#define D_ED2K_INITIATE_CONNECTION_COMMAND_H
 
-#include "common.h"
-#include <string>
+#include "InitiateConnectionCommand.h"
 
 namespace aria2 {
 
-class ProtocolDetector {
+class Ed2kInitiateConnectionCommand : public InitiateConnectionCommand {
 public:
-  ProtocolDetector();
+  Ed2kInitiateConnectionCommand(cuid_t cuid, const std::shared_ptr<Request>& req,
+                                 const std::shared_ptr<FileEntry>& fileEntry,
+                                 RequestGroup* requestGroup, DownloadEngine* e);
 
-  ~ProtocolDetector();
+  virtual ~Ed2kInitiateConnectionCommand();
 
-  // Returns true if uri is http(s)/ftp, otherwise returns false.
-  bool isStreamProtocol(const std::string& uri) const;
-
-  // Returns true if ProtocolDetector thinks uri is a path of BitTorrent
-  // metainfo file, otherwise returns false.
-  bool guessTorrentFile(const std::string& uri) const;
-
-  // Returns true if ProtocolDetector thinks uri is BitTorrent Magnet link.
-  // magnet:?xt=urn:btih:<info-hash>...
-  bool guessTorrentMagnet(const std::string& uri) const;
-
-  // Returns true if ProtocolDetector thinks uri is a path of Metalink XML
-  // file, otherwise return false.
-  bool guessMetalinkFile(const std::string& uri) const;
-
-  // Returns true if uri is an ED2K link (ed2k://...)
-  bool guessEd2kLink(const std::string& uri) const;
+  virtual bool execute() override;
 };
 
 } // namespace aria2
 
-#endif // D_PROTOCOL_DETECTOR_H
+#endif // D_ED2K_INITIATE_CONNECTION_COMMAND_H

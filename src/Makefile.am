@@ -272,6 +272,9 @@ SRCS =  \
 	OpenedFileCounter.cc OpenedFileCounter.h \
 	SHA1IOFile.cc SHA1IOFile.h \
 	EvictSocketPoolCommand.cc EvictSocketPoolCommand.h\
+	Ed2kHelper.cc Ed2kHelper.h\
+	Ed2kInitiateConnectionCommand.cc Ed2kInitiateConnectionCommand.h\
+	Ed2kDownloadCommand.cc Ed2kDownloadCommand.h\
 	libssl_compat.h
 
 if MINGW_BUILD

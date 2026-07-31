@@ -178,4 +178,10 @@ bool ProtocolDetector::guessMetalinkFile(const std::string& uri) const
   return false;
 }
 
+bool ProtocolDetector::guessEd2kLink(const std::string& uri) const
+{
+  return uri.size() > 9 && uri.substr(0, 9) == "ed2k://|" &&
+         uri.find("|file|") != std::string::npos;
+}
+
 } // namespace aria2

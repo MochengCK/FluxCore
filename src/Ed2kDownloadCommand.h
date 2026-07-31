@@ -32,39 +32,58 @@
  * files in the program, then also delete it here.
  */
 /* copyright --> */
-#ifndef D_PROTOCOL_DETECTOR_H
-#define D_PROTOCOL_DETECTOR_H
+#ifndef D_ED2K_DOWNLOAD_COMMAND_H
+#define D_ED2K_DOWNLOAD_COMMAND_H
 
-#include "common.h"
-#include <string>
+#include "AbstractCommand.h"
 
 namespace aria2 {
 
-class ProtocolDetector {
+class Ed2kDownloadCommand : public AbstractCommand {
 public:
-  ProtocolDetector();
+  Ed2kDownloadCommand(cuid_t cuid, const std::shared_ptr<Request>& req,
+                      const std::shared_ptr<FileEntry>& fileEntry,
+                      RequestGroup* requestGroup, DownloadEngine* e,
+                      const std::shared_ptr<SocketCore>& s);
 
-  ~ProtocolDetector();
+  virtual ~Ed2kDownloadCommand();
 
-  // Returns true if uri is http(s)/ftp, otherwise returns false.
-  bool isStreamProtocol(const std::string& uri) const;
+  virtual bool execute() CXX11_OVERRIDE;
 
-  // Returns true if ProtocolDetector thinks uri is a path of BitTorrent
-  // metainfo file, otherwise returns false.
-  bool guessTorrentFile(const std::string& uri) const;
+  // Set file hash and size for ED2K download
+  void setFileHash(const std::string& hash);
+  void setFileSize(uint64_t size);
 
-  // Returns true if ProtocolDetector thinks uri is BitTorrent Magnet link.
-  // magnet:?xt=urn:btih:<info-hash>...
-  bool guessTorrentMagnet(const std::string& uri) const;
+private:
+  // ED2K download states
+  enum class Ed2kState {
+    HANDSHAKE,
+    FILE_INFO,
+    DOWNLOADING,
+    FINISHED,
+    ERROR
+  };
 
-  // Returns true if ProtocolDetector thinks uri is a path of Metalink XML
-  // file, otherwise return false.
-  bool guessMetalinkFile(const std::string& uri) const;
+  std::string fileHash_;
+  uint64_t fileSize_;
+  int64_t downloadedLength_;
+  std::shared_ptr<SocketCore> socket_;
+  Ed2kState state_;
+  int currentChunk_;
+  int totalChunks_;
 
-  // Returns true if uri is an ED2K link (ed2k://...)
-  bool guessEd2kLink(const std::string& uri) const;
+  bool handshake();
+  bool requestFileInfo();
+  bool startDownload();
+  bool receiveData();
+  bool verifyChunkMd4(int chunkIndex, const unsigned char* data, size_t len);
+  bool writeChunkToDisk(int chunkIndex, const unsigned char* data, size_t len);
+  bool sendEd2kMessage(unsigned char msgType, const unsigned char* payload,
+                       size_t payloadLen);
+  bool recvEd2kMessage(unsigned char& msgType,
+                       std::vector<unsigned char>& payload);
 };
 
 } // namespace aria2
 
-#endif // D_PROTOCOL_DETECTOR_H
+#endif // D_ED2K_DOWNLOAD_COMMAND_H
