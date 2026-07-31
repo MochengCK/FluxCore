@@ -370,11 +370,15 @@ bool Ed2kHelper::parseLink(const std::string& uri, Ed2kFileInfo& info)
 
 void Ed2kHelper::getDefaultServers(std::vector<Ed2kServerEntry>& servers)
 {
-  // Add well-known ED2K servers
-  servers.push_back({"ed2k.server1.com", 4242});
-  servers.push_back({"ed2k.server2.com", 4661});
-  servers.push_back({"ed2k.server3.com", 4662});
-  servers.push_back({"ed2k.server4.com", 4672});
+  // Add well-known active ED2K servers (last updated: 2026-05-29)
+  // Source: https://www.shortypower.org/
+  servers.push_back({"45.82.80.155", 5687});   // eMule Security
+  servers.push_back({"176.123.5.89", 4725});    // eMule Sunrise
+  servers.push_back({"91.208.162.87", 4232});   // !! Sharing-Devils No.4 !!
+  servers.push_back({"213.252.245.239", 43333}); // Astra-3
+  servers.push_back({"185.25.48.89", 18357});   // Akteon Server
+  servers.push_back({"213.252.245.239", 33333}); // Astra-5
+  servers.push_back({"185.237.185.226", 31031}); // Gaal
 }
 
 bool Ed2kHelper::sendLoginHandshake(

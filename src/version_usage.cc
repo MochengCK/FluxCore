@@ -84,12 +84,12 @@ void showVersion()
 void showUsage(const std::string& keyword,
                const std::shared_ptr<OptionParser>& oparser, const Console& out)
 {
-  out->printf(_("Usage: fluxcore [OPTIONS] [URI | MAGNET | TORRENT_FILE |"
+  out->printf(_("Usage: lynx [OPTIONS] [URI | MAGNET | TORRENT_FILE |"
                 " METALINK_FILE]..."));
   out->printf("\n");
   if (keyword.empty()) {
     // Very short version of usage.
-    out->printf(_("See 'fluxcore -h'."));
+    out->printf(_("See 'lynx -h'."));
     out->printf("\n");
     return;
   }
@@ -103,7 +103,7 @@ void showUsage(const std::string& keyword,
     else {
       out->printf(_("Printing options tagged with '%s'."), keyword.c_str());
       out->printf("\n");
-      out->printf(_("See 'fluxcore -h#help' to know all available tags."));
+      out->printf(_("See 'lynx -h#help' to know all available tags."));
     }
     out->printf("\n");
     out->printf(_("Options:"));
@@ -170,7 +170,7 @@ void showUsage(const std::string& keyword,
     out->printf("\n\n");
     out->printf(
         _("About the number of connections\n"
-          " Since 1.10.0 release, FluxCore uses 1 connection per host by default "
+          " Since 1.10.0 release, Lynx uses 1 connection per host by default "
           "and has 20MiB\n"
           " segment size restriction. So whatever value you specify using -s "
           "option, it\n"

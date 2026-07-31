@@ -59,12 +59,14 @@ protected:
 
 private:
   // ED2K download states
+  // NOTE: Avoid using ERROR as enum value because windows.h #define ERROR 0
+  // which causes compilation failure on MinGW/MSVC.
   enum class Ed2kState {
     HANDSHAKE,
     FILE_INFO,
     DOWNLOADING,
     FINISHED,
-    ERROR
+    FAILURE
   };
 
   std::string fileHash_;

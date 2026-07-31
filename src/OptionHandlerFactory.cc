@@ -1864,10 +1864,10 @@ std::vector<OptionHandler*> OptionHandlerFactory::createOptionHandlers()
   {
     int major, minor, micro;
     sscanf(PACKAGE_VERSION, "%d.%d.%d", &major, &minor, &micro);
-    // Azureus-style peer ID prefix: -FXVVVV0-
-    // FX = FluxCore, VVVV = version (major, minor*10, micro)
+    // Azureus-style peer ID prefix: -LXVVVV0-
+    // LX = Lynx, VVVV = version (major, minor*10, micro)
     char prefix[21];
-    snprintf(prefix, sizeof(prefix), "-FX%d%d%d0-",
+    snprintf(prefix, sizeof(prefix), "-LX%d%d%d0-",
              major, minor, micro);
     OptionHandler* op(new DefaultOptionHandler(PREF_PEER_ID_PREFIX,
                                                TEXT_PEER_ID_PREFIX, prefix));
@@ -1876,7 +1876,7 @@ std::vector<OptionHandler*> OptionHandlerFactory::createOptionHandlers()
   }
   {
     OptionHandler* op(new DefaultOptionHandler(PREF_PEER_AGENT, TEXT_PEER_AGENT,
-                                               "FluxCore/" PACKAGE_VERSION));
+                                               "Lynx/" PACKAGE_VERSION));
     op->addTag(TAG_BITTORRENT);
     handlers.push_back(op);
   }

@@ -87,8 +87,8 @@ const char C_COMMENT[] = "comment";
 const char C_COMMENT_UTF8[] = "comment.utf-8";
 const char C_CREATED_BY[] = "created by";
 
-const char DEFAULT_PEER_ID_PREFIX[] = "-FX0000-";
-const char DEFAULT_PEER_AGENT[] = "FluxCore/" PACKAGE_VERSION;
+const char DEFAULT_PEER_ID_PREFIX[] = "-LX0000-";
+const char DEFAULT_PEER_AGENT[] = "Lynx/" PACKAGE_VERSION;
 } // namespace
 
 const std::string MULTI("multi");

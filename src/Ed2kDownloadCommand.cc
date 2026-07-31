@@ -166,7 +166,7 @@ bool Ed2kDownloadCommand::execute()
       A2_LOG_INFO(fmt("CUID#%" PRId64 " - ED2K download completed",
                       getCuid()));
       return true;
-    case Ed2kState::ERROR:
+    case Ed2kState::FAILURE:
     default:
       throw DL_ABORT_EX2("ED2K download error",
                          error_code::UNKNOWN_ERROR);
