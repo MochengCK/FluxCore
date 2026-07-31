@@ -1,33 +1,35 @@
-FluxCore
-========
+Lynx
+====
 
-`简体中文 <#fluxcore-说明>`_ | `English <#fluxcore-description>`_
+`简体中文 <#lynx-说明>`_ | `English <#lynx-description>`_
 
-FluxCore 说明
-------------
+Lynx 说明
+---------
 
-FluxCore 是一个基于 `aria2 <https://github.com/aria2/aria2>`_ 的下载引擎，
+Lynx 是一个基于 `aria2 <https://github.com/aria2/aria2>`_ 的下载引擎，
 供 `LinkCore-Download-Manager <https://github.com/MochengCK/LinkCore-Download-Manager>`_ 使用。
 
 本项目在保留 aria2 原始核心功能与构建方式的基础上，
-针对桌面下载器的使用场景进行了适配与扩展。
+针对桌面下载器的使用场景进行了适配与扩展，
+并新增原生 ED2K 协议支持。
 
 aria2 是由 Tatsuhiro Tsujikawa 开发的自由软件，
 遵循 GPL-2.0-or-later 许可证。
-FluxCore 在其基础上继续以 GPL-3.0 许可证发布。
+Lynx 在其基础上继续以 GPL-3.0 许可证发布。
 
-FluxCore Description
---------------------
+Lynx Description
+----------------
 
-FluxCore is a download engine based on `aria2 <https://github.com/aria2/aria2>`_,
+Lynx is a download engine based on `aria2 <https://github.com/aria2/aria2>`_,
 built for `LinkCore-Download-Manager <https://github.com/MochengCK/LinkCore-Download-Manager>`_.
 
 This project preserves aria2's core features and build workflow,
-while adapting and extending it for desktop download scenarios.
+while adapting and extending it for desktop download scenarios,
+with native ED2K protocol support added.
 
 aria2 is free software developed by Tatsuhiro Tsujikawa,
 licensed under GPL-2.0-or-later.
-FluxCore continues on that basis under the GPL-3.0 license.
+Lynx continues on that basis under the GPL-3.0 license.
 * `RFC 3659 Extensions to FTP <http://tools.ietf.org/html/rfc3659>`_
 * `RFC 3986 Uniform Resource Identifier (URI): Generic Syntax <http://tools.ietf.org/html/rfc3986>`_
 * `RFC 4038 Application Aspects of IPv6 Transition <http://tools.ietf.org/html/rfc4038>`_
