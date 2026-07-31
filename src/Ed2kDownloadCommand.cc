@@ -159,6 +159,8 @@ Ed2kDownloadCommand::Ed2kDownloadCommand(
       maxSources_(100),
       currentKadNodeIndex_(0),
       kadBootstrapSent_(false),
+      kadState_(KadState::BOOTSTRAP),
+      partSize_(ED2K_PART_SIZE),
       downloadOffset_(0),
       lastMarkedLength_(0),
       loginSent_(false),
@@ -234,6 +236,9 @@ void Ed2kDownloadCommand::setFileHash(const std::string& hash)
 void Ed2kDownloadCommand::setFileSize(uint64_t size)
 {
   fileSize_ = size;
+  // Build the Part Availability Manager table now that file size is known.
+  // This drives rarest-first scheduling across peers' available parts.
+  initParts();
 }
 
 void Ed2kDownloadCommand::setServerAddr(const std::string& addr,
@@ -1069,7 +1074,10 @@ bool Ed2kDownloadCommand::serverWaitSources()
 
 void Ed2kDownloadCommand::tryNextPeer()
 {
-  // Mark the current peer as failed (cooldown prevents immediate retry)
+  // Mark the current peer as failed (cooldown prevents immediate retry).
+  // A transient failure keeps the peer in the pool (skipped while in
+  // cooldown); a permanent one evicts it. This avoids the "delete peer →
+  // re-find sources → oscillate" anti-pattern of naive implementations.
   if (currentSourceIndex_ < sources_.size()) {
     const auto& cur = sources_[currentSourceIndex_];
     markPeerFailed(cur.addr, cur.port);
@@ -1079,7 +1087,23 @@ void Ed2kDownloadCommand::tryNextPeer()
   sendBuffer_.clear();
   recvBuffer_.clear();
 
+  // Advance past FAILED/EXPIRED sources. We do NOT clear the source list:
+  // keeping failed entries lets the cooldown logic prevent immediate
+  // retries, and they may become usable again after the cooldown window.
   currentSourceIndex_++;
+  while (currentSourceIndex_ < sources_.size()) {
+    const auto& s = sources_[currentSourceIndex_];
+    if (s.state != SourceState::FAILED && s.state != SourceState::EXPIRED) {
+      break;
+    }
+    // If the cooldown has expired, allow the peer to be retried.
+    if (s.state == SourceState::FAILED &&
+        !isPeerInCooldown(s.addr, s.port)) {
+      break;
+    }
+    currentSourceIndex_++;
+  }
+
   if (currentSourceIndex_ >= sources_.size()) {
     A2_LOG_INFO(fmt("CUID#%" PRId64 " - ED2K: exhausted all %zu peer sources,"
                     " reconnecting to server for fresh sources",
@@ -1142,12 +1166,38 @@ bool Ed2kDownloadCommand::reconnectServer()
 // ============================================================================
 
 void Ed2kDownloadCommand::markPeerFailed(const std::string& addr,
-                                          uint16_t port)
+                                          uint16_t port, bool permanent)
 {
-  // Check if already in list
+  // Update the source's lifecycle state.
+  for (auto& s : sources_) {
+    if (s.addr == addr && s.port == port) {
+      s.state = permanent ? SourceState::EXPIRED : SourceState::FAILED;
+      s.lastActive.reset();
+      break;
+    }
+  }
+
+  // Permanent failures are evicted from the source pool entirely so
+  // tryNextPeer()/peerConnect() never retry them. Transient failures
+  // stay in the pool but are skipped while in cooldown.
+  if (permanent) {
+    sources_.erase(
+        std::remove_if(sources_.begin(), sources_.end(),
+                       [&addr, port](const PeerSource& s) {
+                         return s.addr == addr && s.port == port;
+                       }),
+        sources_.end());
+    // Keep currentSourceIndex_ in range.
+    if (currentSourceIndex_ >= sources_.size() && !sources_.empty()) {
+      currentSourceIndex_ = 0;
+    }
+  }
+
+  // Record in failedPeers_ for cooldown tracking.
   for (auto& fp : failedPeers_) {
     if (fp.addr == addr && fp.port == port) {
       fp.failTime.reset();
+      fp.permanent = permanent;
       return;
     }
   }
@@ -1155,15 +1205,18 @@ void Ed2kDownloadCommand::markPeerFailed(const std::string& addr,
   fp.addr = addr;
   fp.port = port;
   fp.failTime.reset();
+  fp.permanent = permanent;
   failedPeers_.push_back(fp);
 
-  // Prune expired entries to prevent unbounded growth
+  // Prune expired entries to prevent unbounded growth.
+  // Permanent entries are pruned immediately (already evicted from pool).
   auto now = global::wallclock();
   failedPeers_.erase(
       std::remove_if(failedPeers_.begin(), failedPeers_.end(),
                      [&now](const FailedPeer& p) {
-                       return p.failTime.difference(now) >
-                              std::chrono::seconds(PEER_COOLDOWN_SECONDS);
+                       return p.permanent ||
+                              p.failTime.difference(now) >
+                                  std::chrono::seconds(PEER_COOLDOWN_SECONDS);
                      }),
       failedPeers_.end());
 }
@@ -1174,6 +1227,7 @@ bool Ed2kDownloadCommand::isPeerInCooldown(const std::string& addr,
   auto now = global::wallclock();
   for (auto& fp : failedPeers_) {
     if (fp.addr == addr && fp.port == port) {
+      if (fp.permanent) return true;
       if (fp.failTime.difference(now) <
           std::chrono::seconds(PEER_COOLDOWN_SECONDS)) {
         return true;
@@ -1194,13 +1248,43 @@ void Ed2kDownloadCommand::addSource(const std::string& addr, uint16_t port)
     if (s.addr == addr && s.port == port) return;
   }
 
-  // Skip peers in cooldown
+  // Skip peers in cooldown (or permanently failed)
   if (isPeerInCooldown(addr, port)) return;
 
   PeerSource ps;
   ps.addr = addr;
   ps.port = port;
+  ps.state = SourceState::NEW;
   sources_.push_back(ps);
+}
+
+int Ed2kDownloadCommand::countActiveSources()
+{
+  int n = 0;
+  for (const auto& s : sources_) {
+    if (s.state == SourceState::CONNECTED ||
+        s.state == SourceState::DOWNLOADING ||
+        s.state == SourceState::QUEUED) {
+      n++;
+    }
+  }
+  return n;
+}
+
+int Ed2kDownloadCommand::getDynamicExchangeInterval()
+{
+  // Dynamic source-exchange frequency:
+  //   few active sources  -> aggressive (60s) to find more
+  //   many active sources -> relaxed (600s) to reduce load
+  //   otherwise           -> user-configured default
+  int active = countActiveSources();
+  if (active < 5) {
+    return 60;
+  }
+  if (active > 20) {
+    return 600;
+  }
+  return sourceExchangeInterval_;
 }
 
 void Ed2kDownloadCommand::sendSourceExchangeRequest()
@@ -1264,11 +1348,17 @@ void Ed2kDownloadCommand::checkServerSourceRefresh()
   if (!serverSourceEnabled_) return;
   if (static_cast<int>(sources_.size()) >= maxSources_) return;
 
+  // Only refresh from the server when active sources are scarce.
+  // Popular files with plenty of sources don't benefit from repeated
+  // server queries — it just wastes server budget.
+  if (countActiveSources() >= 5) return;
+
   if (serverSourceRefreshTimer_.difference() >
       std::chrono::seconds(SERVER_SOURCE_REFRESH_SECONDS)) {
     A2_LOG_INFO(fmt("CUID#%" PRId64
-                    " - ED2K: periodic server source refresh triggered",
-                    getCuid()));
+                    " - ED2K: periodic server source refresh triggered"
+                    " (active sources: %d)",
+                    getCuid(), countActiveSources()));
     serverSourceRefreshTimer_.reset();
     // Re-ask the server for sources by transitioning back to
     // SERVER_CONNECT. The download will resume from current offset
@@ -1324,11 +1414,100 @@ void Ed2kDownloadCommand::initKad()
     kadSocket_->setNonBlockingMode();
     kadRefreshTimer_.reset();
     kadBootstrapSent_ = false;
+    kadState_ = KadState::BOOTSTRAP;
   }
   catch (RecoverableException& e) {
     A2_LOG_WARN(fmt("CUID#%" PRId64 " - ED2K: KAD socket init failed: %s",
                     getCuid(), e.what()));
     kadSocket_.reset();
+  }
+}
+
+void Ed2kDownloadCommand::kadStateMachine()
+{
+  if (!kadEnabled_ || !kadSocket_ || kadNodes_.empty()) return;
+
+  // Always drain any pending UDP response first (non-blocking).
+  // Receiving a response implies the bootstrap/find succeeded, so we
+  // advance the state machine accordingly.
+  bool gotResponse = kadProcessResponse();
+
+  switch (kadState_) {
+  case KadState::BOOTSTRAP: {
+    if (!kadBootstrapSent_) {
+      kadBootstrap();
+      kadRefreshTimer_.reset();
+    }
+    else if (kadRefreshTimer_.difference() > std::chrono::seconds(30)) {
+      // Bootstrap timed out — try the next node.
+      currentKadNodeIndex_++;
+      kadBootstrapSent_ = false;
+      if (currentKadNodeIndex_ >= kadNodes_.size()) {
+        A2_LOG_WARN(fmt("CUID#%" PRId64 " - ED2K: KAD bootstrap exhausted"
+                        " all nodes", getCuid()));
+        kadState_ = KadState::COMPLETE;
+        kadRefreshTimer_.reset();
+      }
+    }
+    // Any response means we're on the network — proceed to search.
+    if (gotResponse) {
+      A2_LOG_INFO(fmt("CUID#%" PRId64 " - ED2K: KAD bootstrap complete,"
+                      " entering READY", getCuid()));
+      kadState_ = KadState::READY;
+      kadRefreshTimer_.reset();
+    }
+    break;
+  }
+
+  case KadState::READY: {
+    kadFindSource();
+    kadState_ = KadState::SEARCHING;
+    kadRefreshTimer_.reset();
+    break;
+  }
+
+  case KadState::SEARCHING: {
+    // Give the search a short window to collect direct responses.
+    if (gotResponse) {
+      kadRefreshTimer_.reset(); // extend window on activity
+    }
+    if (kadRefreshTimer_.difference() > std::chrono::seconds(10)) {
+      kadState_ = KadState::WAIT_RESPONSE;
+      kadRefreshTimer_.reset();
+    }
+    break;
+  }
+
+  case KadState::WAIT_RESPONSE: {
+    if (gotResponse) {
+      kadRefreshTimer_.reset();
+    }
+    if (kadRefreshTimer_.difference() > std::chrono::seconds(30)) {
+      // No more responses — round complete.
+      kadState_ = KadState::COMPLETE;
+      kadRefreshTimer_.reset();
+    }
+    break;
+  }
+
+  case KadState::COMPLETE: {
+    // Wait for the refresh interval before starting another round.
+    // Also re-trigger if active sources dropped and we still have nodes.
+    if (kadRefreshTimer_.difference() >
+            std::chrono::seconds(KAD_REFRESH_SECONDS) ||
+        (countActiveSources() < 5 &&
+         kadRefreshTimer_.difference() > std::chrono::seconds(60))) {
+      // Rotate to the next bootstrap node for diversity.
+      currentKadNodeIndex_++;
+      if (currentKadNodeIndex_ >= kadNodes_.size()) {
+        currentKadNodeIndex_ = 0;
+      }
+      kadBootstrapSent_ = false;
+      kadState_ = KadState::READY;
+      kadRefreshTimer_.reset();
+    }
+    break;
+  }
   }
 }
 
@@ -1484,7 +1663,17 @@ bool Ed2kDownloadCommand::peerConnect()
     return false;
   }
 
-  const PeerSource& src = sources_[currentSourceIndex_];
+  PeerSource& src = sources_[currentSourceIndex_];
+
+  // Skip sources that are in cooldown or permanently expired.
+  if (src.state == SourceState::FAILED || src.state == SourceState::EXPIRED) {
+    currentSourceIndex_++;
+    addCommandSelf();
+    return false;
+  }
+
+  src.state = SourceState::CONNECTING;
+  src.lastActive.reset();
 
   A2_LOG_INFO(fmt("CUID#%" PRId64 " - ED2K connecting to peer %s:%u",
                   getCuid(), src.addr.c_str(), src.port));
@@ -1666,6 +1855,11 @@ bool Ed2kDownloadCommand::peerHandshake()
       return false;
     }
 
+    // Handshake complete — peer is now connected but not yet downloading.
+    if (currentSourceIndex_ < sources_.size()) {
+      sources_[currentSourceIndex_].state = SourceState::CONNECTED;
+      sources_[currentSourceIndex_].lastActive.reset();
+    }
     A2_LOG_INFO(fmt("CUID#%" PRId64 " - ED2K peer handshake completed",
                     getCuid()));
     return true;
@@ -1762,12 +1956,31 @@ bool Ed2kDownloadCommand::peerStartUpload()
       if (msgType == ed2kmsg::ACCEPT_UPLOAD_REQ) {
         A2_LOG_INFO(fmt("CUID#%" PRId64 " - ED2K upload slot accepted",
                         getCuid()));
+        // Upload slot granted — we're now actively downloading.
+        if (currentSourceIndex_ < sources_.size()) {
+          sources_[currentSourceIndex_].state = SourceState::DOWNLOADING;
+          sources_[currentSourceIndex_].queuePosition = -1;
+        }
         return true;
       }
 
       if (msgType == ed2kmsg::QUEUE_POSITION) {
-        A2_LOG_DEBUG(fmt("CUID#%" PRId64 " - ED2K queued for upload slot",
-                         getCuid()));
+        // We're in the peer's upload queue. Parse the queue rank so the
+        // source manager can distinguish "queued" from "failed".
+        // OP_QUEUERANKING payload: [16 bytes hash][4 bytes rank LE]
+        int queueRank = -1;
+        if (payload.size() >= 20) {
+          queueRank = static_cast<int>(payload[16]) |
+                      (static_cast<int>(payload[17]) << 8) |
+                      (static_cast<int>(payload[18]) << 16) |
+                      (static_cast<int>(payload[19]) << 24);
+        }
+        if (currentSourceIndex_ < sources_.size()) {
+          sources_[currentSourceIndex_].state = SourceState::QUEUED;
+          sources_[currentSourceIndex_].queuePosition = queueRank;
+        }
+        A2_LOG_DEBUG(fmt("CUID#%" PRId64 " - ED2K queued for upload slot"
+                         " (rank=%d)", getCuid(), queueRank));
         continue;
       }
 
@@ -1796,35 +2009,32 @@ bool Ed2kDownloadCommand::peerDownload()
   try {
     // --- Periodic source discovery during download ---
     // These checks run on every execute() call and are non-blocking.
+    // Together they form the source-discovery loop:
+    //   ├── Source Exchange (dynamic interval)
+    //   ├── KAD Lookup (state machine)
+    //   └── Server Refresh (conditional on active source count)
 
-    // 1. Periodic source exchange with current peer
+    // 1. Periodic source exchange with current peer.
+    //    Interval is dynamic: aggressive when sources are scarce, relaxed
+    //    when plentiful (see getDynamicExchangeInterval()).
     if (sourceExchangeEnabled_ &&
         sourceExchangeTimer_.difference() >
-            std::chrono::seconds(sourceExchangeInterval_)) {
+            std::chrono::seconds(getDynamicExchangeInterval())) {
       A2_LOG_INFO(fmt("CUID#%" PRId64
-                      " - ED2K: periodic source exchange during download",
-                      getCuid()));
+                      " - ED2K: periodic source exchange during download"
+                      " (interval=%ds, active=%d)",
+                      getCuid(), getDynamicExchangeInterval(),
+                      countActiveSources()));
       sendSourceExchangeRequest();
       // Flush the request — don't block if EAGAIN
       flushSendBuffer();
     }
 
-    // 2. KAD source lookup
+    // 2. KAD source lookup — driven by the KAD state machine.
+    //    kadStateMachine() drains responses and advances:
+    //    BOOTSTRAP → READY → SEARCHING → WAIT_RESPONSE → COMPLETE.
     if (kadEnabled_ && kadSocket_) {
-      if (kadRefreshTimer_.difference() >
-          std::chrono::seconds(KAD_REFRESH_SECONDS)) {
-        kadRefreshTimer_.reset();
-        if (!kadBootstrapSent_) {
-          kadBootstrap();
-        }
-        else {
-          kadFindSource();
-          // Rotate to next KAD node on each refresh
-          currentKadNodeIndex_++;
-        }
-      }
-      // Non-blocking check for KAD responses
-      kadProcessResponse();
+      kadStateMachine();
     }
 
     // 3. Periodic server source refresh
@@ -1835,9 +2045,49 @@ bool Ed2kDownloadCommand::peerDownload()
       return false;
     }
 
-    while (downloadOffset_ < static_cast<int64_t>(fileSize_)) {
+    // Completion check: either sequential cursor reached the end, or all
+    // parts (when tracked) are complete. The parts-based check handles
+    // out-of-order downloads where downloadOffset_ may have jumped.
+    bool allDone = downloadOffset_ >= static_cast<int64_t>(fileSize_);
+    if (!allDone && !parts_.empty()) {
+      allDone = true;
+      for (const auto& p : parts_) {
+        if (!p.completed) { allDone = false; break; }
+      }
+    }
+    while (!allDone) {
       switch (downloadSubState_) {
       case DownloadSubState::REQUEST_PARTS: {
+        // Part Availability Manager: if the current peer's part bitmap is
+        // known and downloadOffset_ points at a part the peer does NOT
+        // have, jump to the rarest available incomplete part. This avoids
+        // requesting data the peer can't provide and spreads requests
+        // across regions instead of everyone hammering 0-1GB.
+        if (!parts_.empty() && currentSourceIndex_ < sources_.size()) {
+          const auto& src = sources_[currentSourceIndex_];
+          if (!src.availableParts.empty()) {
+            size_t curPart = partIndexForOffset(downloadOffset_);
+            if (curPart < src.availableParts.size() &&
+                !src.availableParts[curPart] &&
+                curPart < parts_.size() && !parts_[curPart].completed) {
+              int best = findBestPartToDownload(currentSourceIndex_);
+              if (best >= 0) {
+                A2_LOG_INFO(fmt("CUID#%" PRId64 " - ED2K: jumping to part %d"
+                                " (offset %" PRId64 ") — current part not"
+                                " available from this peer",
+                                getCuid(), best, parts_[best].offset));
+                downloadOffset_ = parts_[best].offset;
+              }
+            }
+            // Mark the part we're about to request as in-progress.
+            size_t reqPart = partIndexForOffset(downloadOffset_);
+            if (reqPart < parts_.size()) {
+              parts_[reqPart].downloading = true;
+              parts_[reqPart].lastRequested.reset();
+            }
+          }
+        }
+
         // Calculate block range: [downloadOffset_, end]
         requestStart_ = downloadOffset_;
         requestEnd_ = downloadOffset_ + ED2K_BLOCK_SIZE;
@@ -1950,9 +2200,42 @@ bool Ed2kDownloadCommand::peerDownload()
           downloadedLength_ += static_cast<int64_t>(expectedDataLen);
           downloadOffset_ = static_cast<int64_t>(dataEnd);
 
+          // Part Availability Manager: record that the current source
+          // actually has this part (proof-by-transfer), and mark the
+          // part complete if the written data reaches its end.
+          if (!parts_.empty() && currentSourceIndex_ < sources_.size()) {
+            size_t pidx = partIndexForOffset(static_cast<int64_t>(dataStart));
+            if (pidx < parts_.size()) {
+              // Mark part available for this source.
+              auto& src = sources_[currentSourceIndex_];
+              if (src.availableParts.empty()) {
+                src.availableParts.assign(parts_.size(), false);
+              }
+              if (pidx < src.availableParts.size()) {
+                src.availableParts[pidx] = true;
+              }
+              auto& srcs = parts_[pidx].sources;
+              if (std::find(srcs.begin(), srcs.end(), currentSourceIndex_) ==
+                  srcs.end()) {
+                srcs.push_back(currentSourceIndex_);
+              }
+              markPartCompleted(static_cast<int64_t>(dataStart),
+                                static_cast<int64_t>(expectedDataLen));
+            }
+          }
+
           updateProgress();
 
           downloadSubState_ = DownloadSubState::REQUEST_PARTS;
+
+          // Recompute completion: sequential cursor OR all parts done.
+          allDone = downloadOffset_ >= static_cast<int64_t>(fileSize_);
+          if (!allDone && !parts_.empty()) {
+            allDone = true;
+            for (const auto& p : parts_) {
+              if (!p.completed) { allDone = false; break; }
+            }
+          }
           break;
         }
 
@@ -1978,7 +2261,7 @@ bool Ed2kDownloadCommand::peerDownload()
         break;
       }
       } // switch (downloadSubState_)
-    } // while (downloadOffset_ < fileSize_)
+    } // while (!allDone)
 
     // All data downloaded — mark as complete
     try {
@@ -2060,6 +2343,148 @@ void Ed2kDownloadCommand::updateProgress()
     A2_LOG_DEBUG(fmt("CUID#%" PRId64 " - ED2K: updateProgress failed: %s",
                      getCuid(), e.what()));
   }
+}
+
+// ============================================================================
+// Part Availability Manager
+//
+// ED2K divides a file into 9.5MB PARTs. Each peer typically only has a
+// subset of parts (especially for large/incomplete downloads). To avoid
+// every connection requesting the same region (e.g. everyone hammering
+// 0-1GB), we track per-part availability across known sources and
+// schedule the rarest incomplete part first.
+//
+// Availability is learned incrementally:
+//   - When a peer successfully sends OP_SENDING_PART for a part, we mark
+//     that part as available for that source (proof-by-transfer).
+//   - When a source's part bitmap is learned via OP_FILESTATUS, it is
+//     merged in via updatePartAvailability().
+// ============================================================================
+
+void Ed2kDownloadCommand::initParts()
+{
+  parts_.clear();
+  if (partSize_ <= 0 || fileSize_ == 0) return;
+
+  int64_t remaining = static_cast<int64_t>(fileSize_);
+  int64_t offset = 0;
+  while (remaining > 0) {
+    PartInfo p;
+    p.offset = offset;
+    p.length = std::min<int64_t>(partSize_, remaining);
+    p.completed = false;
+    p.downloading = false;
+    parts_.push_back(p);
+    offset += partSize_;
+    remaining -= partSize_;
+  }
+
+  // Mark parts already completed (resuming from a partial download).
+  auto ps = getRequestGroup()->getPieceStorage();
+  if (ps) {
+    int64_t completed = ps->getCompletedLength();
+    for (auto& p : parts_) {
+      if (p.offset + p.length <= completed) {
+        p.completed = true;
+      }
+    }
+  }
+
+  A2_LOG_INFO(fmt("CUID#%" PRId64 " - ED2K: Part Availability Manager"
+                  " initialized with %zu parts (partSize=%" PRId64 ")",
+                  getCuid(), parts_.size(), partSize_));
+}
+
+void Ed2kDownloadCommand::markPartCompleted(int64_t offset, int64_t length)
+{
+  if (parts_.empty()) return;
+  size_t idx = partIndexForOffset(offset);
+  if (idx >= parts_.size()) return;
+
+  // A part is complete when the written data reaches its end.
+  if (offset + length >= parts_[idx].offset + parts_[idx].length) {
+    parts_[idx].completed = true;
+    parts_[idx].downloading = false;
+  }
+}
+
+void Ed2kDownloadCommand::updatePartAvailability(
+    size_t sourceIndex, const std::vector<bool>& partBitmap)
+{
+  if (sourceIndex >= sources_.size() || parts_.empty()) return;
+
+  // Resize the source's bitmap if needed.
+  auto& src = sources_[sourceIndex];
+  // A partial bitmap describes only the leading parts; the merge loop
+  // below is bounded by min(availableParts, parts_) so it's handled.
+  src.availableParts = partBitmap;
+  if (src.availableParts.size() > parts_.size()) {
+    src.availableParts.resize(parts_.size());
+  }
+
+  // Merge into the parts_ source lists.
+  for (size_t i = 0; i < src.availableParts.size() && i < parts_.size(); i++) {
+    if (src.availableParts[i]) {
+      // Avoid duplicate entries.
+      auto& srcs = parts_[i].sources;
+      if (std::find(srcs.begin(), srcs.end(), sourceIndex) == srcs.end()) {
+        srcs.push_back(sourceIndex);
+      }
+    }
+  }
+
+  A2_LOG_DEBUG(fmt("CUID#%" PRId64 " - ED2K: updated part availability for"
+                   " source %zu (%zu parts)",
+                   getCuid(), sourceIndex, src.availableParts.size()));
+}
+
+size_t Ed2kDownloadCommand::partIndexForOffset(int64_t offset)
+{
+  if (partSize_ <= 0) return 0;
+  return static_cast<size_t>(offset / partSize_);
+}
+
+int Ed2kDownloadCommand::findBestPartToDownload(size_t sourceIndex)
+{
+  if (parts_.empty()) return -1;
+  if (sourceIndex >= sources_.size()) return -1;
+
+  const auto& src = sources_[sourceIndex];
+  // An empty bitmap means "availability unknown" — fall back to sequential.
+  bool hasBitmap = !src.availableParts.empty();
+
+  // Collect candidate parts: incomplete, not currently downloading, and
+  // (if we have a bitmap) owned by this source.
+  std::vector<int> candidates;
+  for (size_t i = 0; i < parts_.size(); i++) {
+    if (parts_[i].completed || parts_[i].downloading) continue;
+    if (hasBitmap && i < src.availableParts.size() && !src.availableParts[i]) {
+      continue;
+    }
+    candidates.push_back(static_cast<int>(i));
+  }
+
+  if (candidates.empty()) return -1;
+
+  // Rarest-first: sort by the number of known sources (ascending).
+  // This spreads load across parts and avoids creating "holes" where a
+  // part only one peer has disappears before we fetch it.
+  std::sort(candidates.begin(), candidates.end(),
+            [this](int a, int b) {
+              return parts_[a].sources.size() < parts_[b].sources.size();
+            });
+
+  // Among the rarest, prefer parts not requested recently to avoid
+  // hammering the same region across peer switches.
+  auto now = global::wallclock();
+  for (int idx : candidates) {
+    if (parts_[idx].lastRequested.difference(now) >
+        std::chrono::seconds(60)) {
+      return idx;
+    }
+  }
+
+  return candidates[0];
 }
 
 } // namespace aria2

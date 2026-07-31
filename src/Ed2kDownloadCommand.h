@@ -104,6 +104,29 @@ private:
     RECEIVING_DATA   // Waiting for OP_SENDINGPART response
   };
 
+  // Source lifecycle state. ED2K heavily depends on peer state because
+  // a peer may be queued (upload slot) rather than actively transferring.
+  enum class SourceState {
+    NEW,         // Newly discovered, not yet processed
+    CONNECTING,  // Non-blocking connect in progress
+    CONNECTED,   // Hello exchanged but not downloading
+    DOWNLOADING, // Actively transferring file data
+    QUEUED,      // In peer's upload queue (waiting for a slot)
+    FAILED,      // Temporary failure (subject to cooldown)
+    EXPIRED      // Permanently failed (e.g. hash mismatch) — never retry
+  };
+
+  // KAD (Kademlia DHT) lookup state machine. KAD queries are expensive,
+  // so instead of polling on a fixed timer we run a proper state machine:
+  // BOOTSTRAP → READY → SEARCHING → WAIT_RESPONSE → COMPLETE.
+  enum class KadState {
+    BOOTSTRAP,      // Joining the DHT network via a bootstrap node
+    READY,          // Bootstrap done (or skipped), ready to search
+    SEARCHING,      // KAD_FIND_SOURCE sent, waiting for responses
+    WAIT_RESPONSE,  // Grace period to collect delayed responses
+    COMPLETE        // Search round done; will retry after refresh timer
+  };
+
   // --- File info ---
   std::string fileHash_;
   uint64_t fileSize_;
@@ -126,9 +149,19 @@ private:
   static const int SOURCE_WAIT_SECONDS = 30; // Wait between source requests
 
   // --- Source/peer management ---
+  // PeerSource is the unit of source management. It carries lifecycle
+  // state (SourceState) and, once learned from the peer, which ED2K
+  // parts (9.5MB chunks) the peer has. The part bitmap drives the
+  // Part Availability Manager so we request data the peer actually owns.
   struct PeerSource {
     std::string addr;
     uint16_t port;
+    SourceState state = SourceState::NEW;
+    Timer lastActive;
+    // Bitmap of available 9.5MB parts. Empty = unknown (treat as "has all").
+    // Indexed by part number = floor(offset / ED2K_PART_SIZE).
+    std::vector<bool> availableParts;
+    int queuePosition = -1; // Peer's upload-queue rank (-1 = not queued)
   };
   std::vector<PeerSource> sources_;
   size_t currentSourceIndex_;
@@ -147,10 +180,14 @@ private:
   int maxSources_;                 // PREF_ED2K_MAX_SOURCES_PER_FILE cap
 
   // --- Failed peer tracking (cooldown to avoid retrying dead peers) ---
+  // `permanent` distinguishes hard failures (file hash mismatch, banned)
+  // from transient ones (timeout, connection refused). Permanent failures
+  // are removed from the source pool and never retried.
   struct FailedPeer {
     std::string addr;
     uint16_t port;
     Timer failTime;
+    bool permanent = false;
   };
   std::vector<FailedPeer> failedPeers_;
   static const int PEER_COOLDOWN_SECONDS = 300; // 5-minute cooldown
@@ -162,6 +199,24 @@ private:
   Timer kadRefreshTimer_;
   static const int KAD_REFRESH_SECONDS = 180;
   bool kadBootstrapSent_;
+  KadState kadState_ = KadState::BOOTSTRAP;
+
+  // --- Part Availability Manager ---
+  // ED2K splits a file into 9.5MB PARTs. To download efficiently we must
+  // know which parts each peer has, then schedule requests for the rarest
+  // incomplete parts first. This avoids every connection hammering the
+  // same region (e.g. everyone requesting 0-1GB).
+  struct PartInfo {
+    int64_t offset = 0;
+    int64_t length = 0;
+    bool completed = false;
+    bool downloading = false;
+    Timer lastRequested;
+    // Indices into sources_ of peers known to have this part.
+    std::vector<size_t> sources;
+  };
+  std::vector<PartInfo> parts_;
+  int64_t partSize_ = 0; // ED2K_PART_SIZE (9.5MB), copied from constant
 
   // --- Download progress ---
   int64_t downloadOffset_;
@@ -216,14 +271,25 @@ private:
 
   // --- Source management helpers ---
 
-  // Mark a peer as failed (adds to failedPeers_ with current timestamp).
-  void markPeerFailed(const std::string& addr, uint16_t port);
+  // Mark a peer as failed. If `permanent` is true (e.g. file hash
+  // mismatch) the peer is removed from the source pool and never retried.
+  // Otherwise it enters a cooldown window (PEER_COOLDOWN_SECONDS).
+  void markPeerFailed(const std::string& addr, uint16_t port,
+                      bool permanent = false);
 
-  // Check if a peer is in cooldown (recently failed).
+  // Check if a peer is in cooldown (recently failed, non-permanent).
   bool isPeerInCooldown(const std::string& addr, uint16_t port);
 
   // Add a source if not duplicate and not in cooldown. Respects maxSources_.
   void addSource(const std::string& addr, uint16_t port);
+
+  // Count sources in active states (CONNECTED/DOWNLOADING/QUEUED).
+  int countActiveSources();
+
+  // Dynamic source-exchange interval. Aggressive (60s) when sources are
+  // scarce, relaxed (600s) when sources are plentiful, otherwise the
+  // user-configured default. See getDynamicExchangeInterval().
+  int getDynamicExchangeInterval();
 
   // Send OP_SOURCESREQUEST to the currently connected peer.
   // Used both in PEER_SOURCE_EXCHANGE state and periodically during
@@ -235,13 +301,18 @@ private:
   size_t parseSourcesAnswer(const std::vector<unsigned char>& payload);
 
   // Periodically refresh sources from server during download.
-  // Called from PEER_DOWNLOAD when the refresh timer expires.
+  // Only triggers when active sources fall below a threshold (5), so
+  // popular files with many sources don't waste server queries.
   void checkServerSourceRefresh();
 
   // --- KAD (Kademlia DHT) source lookup via UDP ---
 
   // Initialize KAD UDP socket and bootstrap node list.
   void initKad();
+
+  // Drive the KAD state machine (BOOTSTRAP→READY→SEARCHING→
+  // WAIT_RESPONSE→COMPLETE). Called from PEER_DOWNLOAD on each tick.
+  void kadStateMachine();
 
   // Send a KAD bootstrap request to the current KAD node.
   void kadBootstrap();
@@ -252,6 +323,30 @@ private:
   // Process incoming KAD UDP response (non-blocking).
   // Returns true if a message was processed.
   bool kadProcessResponse();
+
+  // --- Part Availability Manager ---
+
+  // Build the parts_ table from fileSize_ and partSize_. Called once
+  // when file size becomes known.
+  void initParts();
+
+  // Mark a part as completed (called after a block within the part is
+  // fully written). Updates parts_[i].completed and downloadOffset_.
+  void markPartCompleted(int64_t offset, int64_t length);
+
+  // Record that a source owns a set of parts. Called after parsing a
+  // peer's part-status info (OP_FILESTATUS / hello answer tags).
+  void updatePartAvailability(size_t sourceIndex,
+                              const std::vector<bool>& partBitmap);
+
+  // Pick the next part to download from the current peer.
+  // Prefers incomplete parts the peer has, rarest-first, and avoids
+  // parts recently requested. Returns the part index, or -1 if none
+  // available (fall back to sequential downloadOffset_).
+  int findBestPartToDownload(size_t sourceIndex);
+
+  // Map an absolute file offset to its part index.
+  size_t partIndexForOffset(int64_t offset);
 
   // --- Low-level protocol helpers ---
   void queueMessage(unsigned char msgType, const unsigned char* payload,
