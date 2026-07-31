@@ -106,6 +106,14 @@ Ed2kDownloadCommand::Ed2kDownloadCommand(
 
 Ed2kDownloadCommand::~Ed2kDownloadCommand() = default;
 
+bool Ed2kDownloadCommand::executeInternal()
+{
+  // ED2K uses a custom execute() flow that handles its own state machine.
+  // This is not called because execute() override bypasses
+  // AbstractCommand::execute().
+  return true;
+}
+
 void Ed2kDownloadCommand::setFileHash(const std::string& hash)
 {
   fileHash_ = hash;
