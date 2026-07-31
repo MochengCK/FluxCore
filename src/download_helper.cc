@@ -431,6 +431,11 @@ public:
       rg->setNumConcurrentCommand(numSplit);
       requestGroups_.push_back(rg);
     }
+else if (detector_.guessEd2kLink(uri)) {
+      auto rg = createRequestGroup(option_, {uri});
+      rg->setNumConcurrentCommand(1);
+      requestGroups_.push_back(rg);
+    }
 #ifdef ENABLE_BITTORRENT
     else if (detector_.guessTorrentMagnet(uri)) {
       requestGroups_.push_back(createBtMagnetRequestGroup(uri, option_));
@@ -496,6 +501,9 @@ private:
 public:
   bool operator()(const std::string& uri)
   {
+    if (detector_.guessEd2kLink(uri)) {
+      return false;
+    }
     return detector_.isStreamProtocol(uri);
   }
 };
