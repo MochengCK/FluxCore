@@ -204,26 +204,26 @@ jobs:
       working-directory: ${{ env.FLUXCORE_DIR }}
       run: |
         make -j"$(nproc)"
-        strip --strip-unneeded src/fluxcore || true
+        strip --strip-unneeded src/xfercore || true
     - name: Verify binary
       working-directory: ${{ env.FLUXCORE_DIR }}
       run: |
-        file src/fluxcore
+        file src/xfercore
         if [ "${{ matrix.arch }}" = "arm64" ]; then
           echo "Cross-compiled for arm64, skipping execution test"
-          file src/fluxcore | grep -q "aarch64" || file src/fluxcore | grep -q "ARM aarch64" || { echo "ERROR: not aarch64"; exit 1; }
+          file src/xfercore | grep -q "aarch64" || file src/xfercore | grep -q "ARM aarch64" || { echo "ERROR: not aarch64"; exit 1; }
         else
-          ./src/fluxcore -v
+          ./src/xfercore -v
         fi
     - name: Collect Linux runtime libs
       shell: bash
       run: |
         set -euo pipefail
         OUT_DIR="dist/FluxCore-linux-${{ matrix.arch }}"
-        BIN_PATH="${{ env.FLUXCORE_DIR }}/src/fluxcore"
+        BIN_PATH="${{ env.FLUXCORE_DIR }}/src/xfercore"
         mkdir -p "$OUT_DIR/lib"
-        cp -v "$BIN_PATH" "$OUT_DIR/fluxcore"
-        chmod +x "$OUT_DIR/fluxcore" || true
+        cp -v "$BIN_PATH" "$OUT_DIR/xfercore"
+        chmod +x "$OUT_DIR/xfercore" || true
 
         echo "=== Binary file type ==="
         file "$BIN_PATH"
@@ -265,16 +265,16 @@ jobs:
           fi
 
           # Make binary self-contained: prefer bundled libs under ./lib
-          patchelf --set-rpath '$ORIGIN/lib:$ORIGIN' "$OUT_DIR/fluxcore" || true
+          patchelf --set-rpath '$ORIGIN/lib:$ORIGIN' "$OUT_DIR/xfercore" || true
 
           # Verify final bundle does not miss libs
           echo ""
           echo "=== Final binary dependencies ==="
           if [ "${{ matrix.arch }}" = "arm64" ]; then
             # ldd cannot process cross-arch binary; list NEEDED entries instead
-            aarch64-linux-gnu-readelf -d "$OUT_DIR/fluxcore" || true
+            aarch64-linux-gnu-readelf -d "$OUT_DIR/xfercore" || true
           else
-            ldd "$OUT_DIR/fluxcore" || true
+            ldd "$OUT_DIR/xfercore" || true
           fi
         else
           echo "Binary is statically linked, no libraries to collect"
@@ -440,17 +440,17 @@ jobs:
       working-directory: ${{ env.FLUXCORE_DIR }}
       run: |
         make -j"$(sysctl -n hw.ncpu)"
-        strip -x src/fluxcore || true
+        strip -x src/xfercore || true
     - name: Verify binary (before lib collection)
       working-directory: ${{ env.FLUXCORE_DIR }}
       run: |
-        file src/fluxcore
-        otool -L src/fluxcore
+        file src/xfercore
+        otool -L src/xfercore
         if [ "${{ matrix.arch }}" = "x64" ]; then
-          file src/fluxcore | grep -q "x86_64" || { echo "ERROR: not x86_64"; exit 1; }
+          file src/xfercore | grep -q "x86_64" || { echo "ERROR: not x86_64"; exit 1; }
           echo "x64 binary verified (architecture check only, execution test after lib collection)"
         else
-          file src/fluxcore | grep -q "arm64" || { echo "ERROR: not arm64"; exit 1; }
+          file src/xfercore | grep -q "arm64" || { echo "ERROR: not arm64"; exit 1; }
           echo "arm64 binary verified (architecture check only, execution test after lib collection)"
         fi
     - name: Collect macOS runtime libs
@@ -460,10 +460,10 @@ jobs:
       run: |
         set -euo pipefail
         OUT_DIR="dist/FluxCore-macos-${{ matrix.arch }}"
-        BIN_PATH="${{ env.FLUXCORE_DIR }}/src/fluxcore"
+        BIN_PATH="${{ env.FLUXCORE_DIR }}/src/xfercore"
         mkdir -p "$OUT_DIR/lib"
-        cp -v "$BIN_PATH" "$OUT_DIR/fluxcore"
-        chmod +x "$OUT_DIR/fluxcore" || true
+        cp -v "$BIN_PATH" "$OUT_DIR/xfercore"
+        chmod +x "$OUT_DIR/xfercore" || true
 
         echo "=== Initial binary dependencies ==="
         otool -L "$BIN_PATH"
@@ -474,7 +474,7 @@ jobs:
           [[ "$p" == /opt/homebrew/* ]] || [[ "$p" == /usr/local/* ]] || [[ "$p" == "$PREFIX"/* ]]
         }
 
-        queue=("$OUT_DIR/fluxcore")
+        queue=("$OUT_DIR/xfercore")
         # Portable dedup (macOS bash 3.2 has no associative arrays):
         # track processed paths in an indexed array with linear search.
         processed_paths=()
@@ -518,7 +518,7 @@ jobs:
 
         # Also check for @rpath references and copy those libs
         echo "=== Checking for @rpath dependencies ==="
-        for f in "$OUT_DIR/fluxcore"; do
+        for f in "$OUT_DIR/xfercore"; do
           while IFS= read -r dep; do
             if [[ "$dep" == @rpath/* ]]; then
               libname="${dep#@rpath/}"
@@ -540,13 +540,13 @@ jobs:
 
         # Rewrite dylib references to relative paths and add @executable_path/lib to rpath
         echo "=== Rewriting library references ==="
-        for f in "$OUT_DIR/fluxcore" "$OUT_DIR"/lib/*; do
+        for f in "$OUT_DIR/xfercore" "$OUT_DIR"/lib/*; do
           [ -f "$f" ] || continue
           
           echo "Processing: $f"
           
           # Add @executable_path/lib or @loader_path to rpath if not already present
-          if [[ "$f" == "$OUT_DIR/fluxcore" ]]; then
+          if [[ "$f" == "$OUT_DIR/xfercore" ]]; then
             if ! otool -l "$f" | grep -q "@executable_path/lib"; then
               echo "  Adding @executable_path/lib to rpath"
               install_name_tool -add_rpath "@executable_path/lib" "$f" || true
@@ -560,7 +560,7 @@ jobs:
             if [[ "$dep" == @rpath/* ]]; then
               libname="${dep#@rpath/}"
               if [ -f "$OUT_DIR/lib/$libname" ]; then
-                if [[ "$f" == "$OUT_DIR/fluxcore" ]]; then
+                if [[ "$f" == "$OUT_DIR/xfercore" ]]; then
                   newpath="@executable_path/lib/$libname"
                   echo "  Changing @rpath/$libname -> $newpath"
                   install_name_tool -change "$dep" "$newpath" "$f" || true
@@ -576,7 +576,7 @@ jobs:
             # Handle absolute paths
             base="$(basename "$dep")"
             if [ -f "$OUT_DIR/lib/$base" ]; then
-              if [[ "$f" == "$OUT_DIR/fluxcore" ]]; then
+              if [[ "$f" == "$OUT_DIR/xfercore" ]]; then
                 localRefExe="@executable_path/lib/$base"
                 echo "  Changing $dep -> $localRefExe"
                 install_name_tool -change "$dep" "$localRefExe" "$f" || true
@@ -601,10 +601,10 @@ jobs:
         ls -la "$OUT_DIR/lib" || true
         echo ""
         echo "=== Binary dependencies ==="
-        otool -L "$OUT_DIR/fluxcore"
+        otool -L "$OUT_DIR/xfercore"
         echo ""
         echo "=== Binary rpaths ==="
-        otool -l "$OUT_DIR/fluxcore" | grep -A 2 LC_RPATH || echo "No RPATH found"
+        otool -l "$OUT_DIR/xfercore" | grep -A 2 LC_RPATH || echo "No RPATH found"
     - name: Test bundled binary
       shell: bash
       run: |
@@ -612,10 +612,10 @@ jobs:
         cd "$OUT_DIR"
         if [ "${{ matrix.arch }}" = "x64" ]; then
           echo "x64 binary on arm64 host, architecture validation only"
-          file fluxcore | grep -q "x86_64" || { echo "ERROR: not x86_64"; exit 1; }
+          file xfercore | grep -q "x86_64" || { echo "ERROR: not x86_64"; exit 1; }
         else
           echo "Testing arm64 binary..."
-          ./fluxcore -v
+          ./xfercore -v
         fi
     - name: Upload artifact
       uses: actions/upload-artifact@v4
@@ -760,14 +760,14 @@ jobs:
       working-directory: ${{ env.FLUXCORE_DIR }}
       run: |
         make -j"$(nproc)"
-        strip -s src/fluxcore.exe || true
+        strip -s src/xfercore.exe || true
     - name: Verify binary
       shell: msys2 {0}
       working-directory: ${{ env.FLUXCORE_DIR }}
       run: |
-        ./src/fluxcore.exe -v
+        ./src/xfercore.exe -v
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
         name: FluxCore-windows-${{ matrix.arch }}
-        path: ${{ env.FLUXCORE_DIR }}/src/fluxcore.exe
+        path: ${{ env.FLUXCORE_DIR }}/src/xfercore.exe
