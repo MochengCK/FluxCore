@@ -139,10 +139,12 @@ bool Ed2kInitiateConnectionCommand::execute()
         // can be resumed on restart.
         auto progressInfoFile = std::make_shared<DefaultBtProgressInfoFile>(
             dc, ps, getOption().get());
-        progressInfoFile->save();
         getRequestGroup()->setProgressInfoFile(progressInfoFile);
 
-        // Load existing progress if .aria2 file exists (restart scenario)
+        // Load existing progress if .aria2 file exists (restart scenario).
+        // Do NOT call save() here — it would create the file and make
+        // exists() return true, causing openExistingFile() to fail on
+        // a file that doesn't exist yet (first-time download).
         if (progressInfoFile->exists()) {
           progressInfoFile->load();
           ps->getDiskAdaptor()->openExistingFile();
