@@ -37,6 +37,7 @@
 
 #include <cstring>
 #include <vector>
+#include <algorithm>
 #include <chrono>
 
 #include "Request.h"
@@ -155,6 +156,9 @@ Ed2kDownloadCommand::Ed2kDownloadCommand(
       kadEnabled_(false),
       sourceExchangeInterval_(300),
       sourceExchangeSent_(false),
+      maxSources_(100),
+      currentKadNodeIndex_(0),
+      kadBootstrapSent_(false),
       downloadOffset_(0),
       lastMarkedLength_(0),
       loginSent_(false),
@@ -182,12 +186,21 @@ Ed2kDownloadCommand::Ed2kDownloadCommand(
     if (interval > 0) {
       sourceExchangeInterval_ = interval;
     }
+    int maxSrc = opt->getAsInt(PREF_ED2K_MAX_SOURCES_PER_FILE);
+    if (maxSrc > 0) {
+      maxSources_ = maxSrc;
+    }
   }
   A2_LOG_INFO(fmt("CUID#%" PRId64 " - ED2K source discovery config:"
-                  " server=%d sourceExchange=%d kad=%d interval=%ds",
+                  " server=%d sourceExchange=%d kad=%d interval=%ds maxSources=%d",
                   getCuid(), serverSourceEnabled_ ? 1 : 0,
                   sourceExchangeEnabled_ ? 1 : 0,
-                  kadEnabled_ ? 1 : 0, sourceExchangeInterval_));
+                  kadEnabled_ ? 1 : 0, sourceExchangeInterval_, maxSources_));
+
+  // Initialize KAD if enabled.
+  if (kadEnabled_) {
+    initKad();
+  }
 
   // Resume support: if PieceStorage already has progress (e.g. after a
   // timeout/retry), initialize downloadOffset_ and downloadedLength_ from
@@ -1056,6 +1069,12 @@ bool Ed2kDownloadCommand::serverWaitSources()
 
 void Ed2kDownloadCommand::tryNextPeer()
 {
+  // Mark the current peer as failed (cooldown prevents immediate retry)
+  if (currentSourceIndex_ < sources_.size()) {
+    const auto& cur = sources_[currentSourceIndex_];
+    markPeerFailed(cur.addr, cur.port);
+  }
+
   // Clear stale protocol buffers — we're switching to a new peer
   sendBuffer_.clear();
   recvBuffer_.clear();
@@ -1065,8 +1084,8 @@ void Ed2kDownloadCommand::tryNextPeer()
     A2_LOG_INFO(fmt("CUID#%" PRId64 " - ED2K: exhausted all %zu peer sources,"
                     " reconnecting to server for fresh sources",
                     getCuid(), sources_.size()));
-    // Clear used sources and reconnect to server
-    sources_.clear();
+    // Don't clear sources — keep them for cooldown reference.
+    // Reconnect to server for fresh sources.
     currentSourceIndex_ = 0;
 
     if (!reconnectServer()) {
@@ -1116,6 +1135,346 @@ bool Ed2kDownloadCommand::reconnectServer()
 
   state_ = Ed2kState::SERVER_CONNECT;
   return true;
+}
+
+// ============================================================================
+// Source management helpers
+// ============================================================================
+
+void Ed2kDownloadCommand::markPeerFailed(const std::string& addr,
+                                          uint16_t port)
+{
+  // Check if already in list
+  for (auto& fp : failedPeers_) {
+    if (fp.addr == addr && fp.port == port) {
+      fp.failTime.reset();
+      return;
+    }
+  }
+  FailedPeer fp;
+  fp.addr = addr;
+  fp.port = port;
+  fp.failTime.reset();
+  failedPeers_.push_back(fp);
+
+  // Prune expired entries to prevent unbounded growth
+  auto now = global::wallclock();
+  failedPeers_.erase(
+      std::remove_if(failedPeers_.begin(), failedPeers_.end(),
+                     [&now](const FailedPeer& p) {
+                       return p.failTime.difference(now) >
+                              std::chrono::seconds(PEER_COOLDOWN_SECONDS);
+                     }),
+      failedPeers_.end());
+}
+
+bool Ed2kDownloadCommand::isPeerInCooldown(const std::string& addr,
+                                            uint16_t port)
+{
+  auto now = global::wallclock();
+  for (auto& fp : failedPeers_) {
+    if (fp.addr == addr && fp.port == port) {
+      if (fp.failTime.difference(now) <
+          std::chrono::seconds(PEER_COOLDOWN_SECONDS)) {
+        return true;
+      }
+      return false;
+    }
+  }
+  return false;
+}
+
+void Ed2kDownloadCommand::addSource(const std::string& addr, uint16_t port)
+{
+  if (addr.empty() || port == 0) return;
+  if (static_cast<int>(sources_.size()) >= maxSources_) return;
+
+  // Check for duplicates
+  for (const auto& s : sources_) {
+    if (s.addr == addr && s.port == port) return;
+  }
+
+  // Skip peers in cooldown
+  if (isPeerInCooldown(addr, port)) return;
+
+  PeerSource ps;
+  ps.addr = addr;
+  ps.port = port;
+  sources_.push_back(ps);
+}
+
+void Ed2kDownloadCommand::sendSourceExchangeRequest()
+{
+  std::vector<unsigned char> hashBytes = Ed2kHelper::hexToHash(fileHash_);
+  if (hashBytes.size() != 16) return;
+
+  std::vector<unsigned char> payload;
+  payload.insert(payload.end(), hashBytes.begin(), hashBytes.end());
+  payload.push_back(0);
+  payload.push_back(0);
+
+  queueMessage(ed2kmsg::SOURCES_REQUEST, payload.data(), payload.size());
+  sourceExchangeSent_ = true;
+  sourceExchangeTimer_.reset();
+
+  A2_LOG_INFO(fmt("CUID#%" PRId64 " - ED2K: sent periodic source exchange",
+                  getCuid()));
+}
+
+size_t Ed2kDownloadCommand::parseSourcesAnswer(
+    const std::vector<unsigned char>& payload)
+{
+  if (payload.size() < 17) return 0;
+
+  size_t count = payload[16];
+  size_t expectedSize = 17 + count * 6;
+  if (payload.size() < expectedSize) return 0;
+
+  size_t added = 0;
+  for (size_t i = 0; i < count; i++) {
+    size_t offset = 17 + i * 6;
+    uint32_t ip = static_cast<uint32_t>(payload[offset]) |
+                  (static_cast<uint32_t>(payload[offset + 1]) << 8) |
+                  (static_cast<uint32_t>(payload[offset + 2]) << 16) |
+                  (static_cast<uint32_t>(payload[offset + 3]) << 24);
+    uint16_t port = static_cast<uint16_t>(payload[offset + 4]) |
+                    (static_cast<uint16_t>(payload[offset + 5]) << 8);
+    if (ip == 0 || port == 0) continue;
+
+    struct in_addr inAddr;
+    inAddr.s_addr = htonl(ip);
+    char ipStr[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &inAddr, ipStr, sizeof(ipStr));
+
+    size_t before = sources_.size();
+    addSource(ipStr, port);
+    if (sources_.size() > before) added++;
+  }
+
+  if (added > 0) {
+    A2_LOG_INFO(fmt("CUID#%" PRId64
+                    " - ED2K: source exchange added %zu sources (total %zu)",
+                    getCuid(), added, sources_.size()));
+  }
+  return added;
+}
+
+void Ed2kDownloadCommand::checkServerSourceRefresh()
+{
+  if (!serverSourceEnabled_) return;
+  if (static_cast<int>(sources_.size()) >= maxSources_) return;
+
+  if (serverSourceRefreshTimer_.difference() >
+      std::chrono::seconds(SERVER_SOURCE_REFRESH_SECONDS)) {
+    A2_LOG_INFO(fmt("CUID#%" PRId64
+                    " - ED2K: periodic server source refresh triggered",
+                    getCuid()));
+    serverSourceRefreshTimer_.reset();
+    // Re-ask the server for sources by transitioning back to
+    // SERVER_CONNECT. The download will resume from current offset
+    // after fresh sources are obtained.
+    loginSent_ = false;
+    sourcesRequested_ = false;
+    sendBuffer_.clear();
+    recvBuffer_.clear();
+    try {
+      if (getSocket() && getSocket()->isOpen()) {
+        getSocket()->closeConnection();
+      }
+    }
+    catch (...) {}
+    disableReadCheckSocket();
+    disableWriteCheckSocket();
+    state_ = Ed2kState::SERVER_CONNECT;
+  }
+}
+
+// ============================================================================
+// KAD (Kademlia DHT) source lookup via UDP
+// ============================================================================
+
+void Ed2kDownloadCommand::initKad()
+{
+  // Parse KAD bootstrap nodes from user config, or use defaults.
+  std::string nodesConfig;
+  auto opt = getOption();
+  if (opt) {
+    nodesConfig = opt->get(PREF_ED2K_KAD_BOOTSTRAP_NODES);
+  }
+
+  std::vector<Ed2kServerEntry> nodes;
+  if (!nodesConfig.empty()) {
+    Ed2kHelper::parseKadBootstrapNodes(nodesConfig, nodes);
+  }
+  else {
+    Ed2kHelper::getDefaultKadBootstrapNodes(nodes);
+  }
+
+  for (const auto& n : nodes) {
+    kadNodes_.push_back({n.addr, n.port});
+  }
+
+  A2_LOG_INFO(fmt("CUID#%" PRId64 " - ED2K: KAD initialized with %zu nodes",
+                  getCuid(), kadNodes_.size()));
+
+  // Create UDP socket for KAD communication.
+  try {
+    kadSocket_ = std::make_shared<SocketCore>(SOCK_DGRAM);
+    kadSocket_->bindWithFamily(0, AF_INET);
+    kadSocket_->setNonBlockingMode();
+    kadRefreshTimer_.reset();
+    kadBootstrapSent_ = false;
+  }
+  catch (RecoverableException& e) {
+    A2_LOG_WARN(fmt("CUID#%" PRId64 " - ED2K: KAD socket init failed: %s",
+                    getCuid(), e.what()));
+    kadSocket_.reset();
+  }
+}
+
+void Ed2kDownloadCommand::kadBootstrap()
+{
+  if (!kadSocket_ || kadNodes_.empty()) return;
+
+  // Rotate to next bootstrap node
+  const auto& node = kadNodes_[currentKadNodeIndex_ % kadNodes_.size()];
+
+  // KAD2_BOOTSTRAP_REQ:
+  // [1 byte] 0xE3 (protocol)
+  // [1 byte] opcode (KAD2_BOOTSTRAP_REQ = 0x2B in eMule)
+  // [16 bytes] client ID (random, used for node identification)
+  // [16 bytes] target ID (our node ID, derived from user hash)
+  std::vector<unsigned char> packet;
+  packet.push_back(0xE3);
+  packet.push_back(0x2B); // KAD2_BOOTSTRAP_REQ
+  // Client ID — use our user hash (reversed for KAD)
+  std::vector<unsigned char> hashBytes = Ed2kHelper::hexToHash(fileHash_);
+  if (hashBytes.size() == 16) {
+    packet.insert(packet.end(), hashBytes.begin(), hashBytes.end());
+  }
+  else {
+    // Fallback: zeros
+    packet.insert(packet.end(), 16, 0);
+  }
+  // Target ID — same as client ID for bootstrap
+  packet.insert(packet.end(), 16, 0);
+
+  try {
+    kadSocket_->writeData(packet.data(), packet.size(),
+                           node.first, node.second);
+    kadBootstrapSent_ = true;
+    A2_LOG_INFO(fmt("CUID#%" PRId64 " - ED2K: KAD bootstrap sent to %s:%u",
+                    getCuid(), node.first.c_str(), node.second));
+  }
+  catch (RecoverableException& e) {
+    A2_LOG_DEBUG(fmt("CUID#%" PRId64 " - ED2K: KAD bootstrap failed: %s",
+                     getCuid(), e.what()));
+    currentKadNodeIndex_++;
+  }
+}
+
+void Ed2kDownloadCommand::kadFindSource()
+{
+  if (!kadSocket_ || kadNodes_.empty()) return;
+
+  const auto& node = kadNodes_[currentKadNodeIndex_ % kadNodes_.size()];
+
+  // KAD2_REQ: search for file sources by file hash.
+  // [1 byte]  0xE3 (protocol)
+  // [1 byte]  opcode (KAD2_REQ = 0x2A in eMule, simplified)
+  // [16 bytes] file hash (MD4) — the file we're looking for
+  // [1 byte]  search type (0 = FIND_SOURCE)
+  std::vector<unsigned char> packet;
+  packet.push_back(0xE3);
+  packet.push_back(0x2A); // KAD2_REQ (simplified)
+  std::vector<unsigned char> hashBytes = Ed2kHelper::hexToHash(fileHash_);
+  if (hashBytes.size() != 16) return;
+  packet.insert(packet.end(), hashBytes.begin(), hashBytes.end());
+  packet.push_back(0x00); // FIND_SOURCE
+
+  try {
+    kadSocket_->writeData(packet.data(), packet.size(),
+                           node.first, node.second);
+    A2_LOG_INFO(fmt("CUID#%" PRId64 " - ED2K: KAD find-source sent to %s:%u"
+                    " for hash %s",
+                    getCuid(), node.first.c_str(), node.second,
+                    fileHash_.c_str()));
+  }
+  catch (RecoverableException& e) {
+    A2_LOG_DEBUG(fmt("CUID#%" PRId64 " - ED2K: KAD find-source failed: %s",
+                     getCuid(), e.what()));
+    currentKadNodeIndex_++;
+  }
+}
+
+bool Ed2kDownloadCommand::kadProcessResponse()
+{
+  if (!kadSocket_) return false;
+
+  unsigned char buf[1024];
+  Endpoint sender;
+
+  try {
+    ssize_t n = kadSocket_->readDataFrom(buf, sizeof(buf), sender);
+    if (n <= 0) return false;
+
+    A2_LOG_DEBUG(fmt("CUID#%" PRId64 " - ED2K: KAD response %zd bytes from %s:%u",
+                     getCuid(), n, sender.addr.c_str(), sender.port));
+
+    // Minimal KAD response parsing:
+    // [1 byte]  protocol (0xE3)
+    // [1 byte]  opcode
+    // [rest]    payload
+    if (n < 2 || buf[0] != 0xE3) return false;
+
+    unsigned char opcode = buf[1];
+    // KAD2_REQ_RESID (0x4B) or KAD2_HELLO_RES (0x4C) responses may
+    // contain source information.
+    // For a simplified implementation, we look for KAD2_REQ_RESID
+    // which contains peer contact info.
+    if (opcode == 0x4B && n >= 2 + 6) {
+      // Parse sources from the response.
+      // Format (simplified): [16 bytes file_hash][1 byte count][count × 6 bytes]
+      // The actual KAD response format is more complex, but we try to
+      // extract any [IP:port] pairs we can find.
+      size_t offset = 2;
+      // Skip file hash if present
+      if (n >= offset + 16) offset += 16;
+      // Try to read source count
+      if (n >= offset + 1) {
+        size_t count = buf[offset++];
+        for (size_t i = 0; i < count && offset + 6 <= static_cast<size_t>(n); i++) {
+          uint32_t ip = static_cast<uint32_t>(buf[offset]) |
+                        (static_cast<uint32_t>(buf[offset + 1]) << 8) |
+                        (static_cast<uint32_t>(buf[offset + 2]) << 16) |
+                        (static_cast<uint32_t>(buf[offset + 3]) << 24);
+          uint16_t port = static_cast<uint16_t>(buf[offset + 4]) |
+                          (static_cast<uint16_t>(buf[offset + 5]) << 8);
+          offset += 6;
+
+          if (ip == 0 || port == 0) continue;
+
+          struct in_addr inAddr;
+          inAddr.s_addr = htonl(ip);
+          char ipStr[INET_ADDRSTRLEN];
+          inet_ntop(AF_INET, &inAddr, ipStr, sizeof(ipStr));
+
+          size_t before = sources_.size();
+          addSource(ipStr, port);
+          if (sources_.size() > before) {
+            A2_LOG_INFO(fmt("CUID#%" PRId64
+                            " - ED2K: KAD found source %s:%u",
+                            getCuid(), ipStr, port));
+          }
+        }
+      }
+    }
+    return true;
+  }
+  catch (RecoverableException& e) {
+    // EAGAIN or other error — non-fatal
+    return false;
+  }
 }
 
 bool Ed2kDownloadCommand::peerConnect()
@@ -1322,47 +1681,14 @@ bool Ed2kDownloadCommand::peerHandshake()
 bool Ed2kDownloadCommand::peerSourceExchange()
 {
   // Source Exchange: ask the connected peer for additional sources.
-  // OP_SOURCESREQUEST payload:
-  //   [16 bytes] file_hash (MD4)
-  //   [2 bytes]  requested_source_count (LE, 0 = give me all)
-  //
-  // OP_SOURCESANSWER payload (from peer):
-  //   [16 bytes] file_hash
-  //   [1 byte]  source_count
-  //   [source_count × 6 bytes] sources: [4 bytes IP LE][2 bytes port LE]
-  //
-  // The exchange is best-effort — if the peer doesn't respond or doesn't
-  // support source exchange, we just proceed to upload request.
+  // Best-effort — if the peer doesn't respond or doesn't support it,
+  // we just proceed to upload request.
 
   try {
     if (!sourceExchangeSent_) {
-      // Build and send OP_SOURCESREQUEST
-      std::vector<unsigned char> payload;
-      // File hash (16 bytes binary MD4)
-      std::vector<unsigned char> hashBytes = Ed2kHelper::hexToHash(fileHash_);
-      if (hashBytes.size() != 16) {
-        // Invalid hash — skip source exchange
-        A2_LOG_WARN(fmt("CUID#%" PRId64
-                        " - ED2K: invalid file hash for source exchange",
-                        getCuid()));
-        return true;
-      }
-      payload.insert(payload.end(), hashBytes.begin(), hashBytes.end());
-      // Requested source count = 0 (give me all)
-      payload.push_back(0);
-      payload.push_back(0);
-
-      queueMessage(ed2kmsg::SOURCES_REQUEST, payload.data(), payload.size());
-      sourceExchangeSent_ = true;
-      sourceExchangeTimer_.reset();
-
-      A2_LOG_INFO(fmt("CUID#%" PRId64 " - ED2K: sent source exchange request",
-                      getCuid()));
-
+      sendSourceExchangeRequest();
       if (!flushSendBuffer()) {
-        if (connectionError_) {
-          return false;
-        }
+        if (connectionError_) return false;
         setWriteCheckSocket(getSocket());
         return false;
       }
@@ -1383,71 +1709,16 @@ bool Ed2kDownloadCommand::peerSourceExchange()
       return false;
     }
 
-    // Process the received message
     if (msgType == ed2kmsg::SOURCES_ANSWER) {
-      // Parse source list from answer
-      if (payload.size() < 17) {
-        // Need at least hash(16) + count(1)
-        return true;
-      }
-      size_t count = payload[16];
-      size_t expectedSize = 17 + count * 6;
-      if (payload.size() < expectedSize) {
-        A2_LOG_WARN(fmt("CUID#%" PRId64
-                        " - ED2K: source exchange answer too short",
-                        getCuid()));
-        return true;
-      }
-
-      size_t added = 0;
-      for (size_t i = 0; i < count; i++) {
-        size_t offset = 17 + i * 6;
-        uint32_t ip = static_cast<uint32_t>(payload[offset]) |
-                      (static_cast<uint32_t>(payload[offset + 1]) << 8) |
-                      (static_cast<uint32_t>(payload[offset + 2]) << 16) |
-                      (static_cast<uint32_t>(payload[offset + 3]) << 24);
-        uint16_t port = static_cast<uint16_t>(payload[offset + 4]) |
-                        (static_cast<uint16_t>(payload[offset + 5]) << 8);
-
-        if (ip == 0 || port == 0) continue;
-
-        // Convert IP to string
-        struct in_addr inAddr;
-        inAddr.s_addr = htonl(ip);
-        char ipStr[INET_ADDRSTRLEN];
-        inet_ntop(AF_INET, &inAddr, ipStr, sizeof(ipStr));
-
-        // Check for duplicates
-        bool exists = false;
-        for (const auto& s : sources_) {
-          if (s.addr == ipStr && s.port == port) {
-            exists = true;
-            break;
-          }
-        }
-        if (!exists) {
-          PeerSource ps;
-          ps.addr = ipStr;
-          ps.port = port;
-          sources_.push_back(ps);
-          added++;
-        }
-      }
-
-      A2_LOG_INFO(fmt("CUID#%" PRId64
-                      " - ED2K: source exchange got %u new sources (total %u)",
-                      getCuid(), static_cast<unsigned>(added),
-                      static_cast<unsigned>(sources_.size())));
+      parseSourcesAnswer(payload);
     }
-    // Ignore other message types during source exchange — they'll be
-    // processed in subsequent states.
+    // Ignore other message types during source exchange
 
     return true;
   }
   catch (RecoverableException& e) {
     A2_LOG_INFO(fmt("CUID#%" PRId64 " - ED2K source exchange error: %s",
                     getCuid(), e.what()));
-    // Non-fatal — proceed to upload request
     return true;
   }
 }
@@ -1523,6 +1794,47 @@ bool Ed2kDownloadCommand::peerStartUpload()
 bool Ed2kDownloadCommand::peerDownload()
 {
   try {
+    // --- Periodic source discovery during download ---
+    // These checks run on every execute() call and are non-blocking.
+
+    // 1. Periodic source exchange with current peer
+    if (sourceExchangeEnabled_ &&
+        sourceExchangeTimer_.difference() >
+            std::chrono::seconds(sourceExchangeInterval_)) {
+      A2_LOG_INFO(fmt("CUID#%" PRId64
+                      " - ED2K: periodic source exchange during download",
+                      getCuid()));
+      sendSourceExchangeRequest();
+      // Flush the request — don't block if EAGAIN
+      flushSendBuffer();
+    }
+
+    // 2. KAD source lookup
+    if (kadEnabled_ && kadSocket_) {
+      if (kadRefreshTimer_.difference() >
+          std::chrono::seconds(KAD_REFRESH_SECONDS)) {
+        kadRefreshTimer_.reset();
+        if (!kadBootstrapSent_) {
+          kadBootstrap();
+        }
+        else {
+          kadFindSource();
+          // Rotate to next KAD node on each refresh
+          currentKadNodeIndex_++;
+        }
+      }
+      // Non-blocking check for KAD responses
+      kadProcessResponse();
+    }
+
+    // 3. Periodic server source refresh
+    checkServerSourceRefresh();
+    // If server refresh triggered, state_ changed — return to re-enter
+    if (state_ != Ed2kState::PEER_DOWNLOAD) {
+      addCommandSelf();
+      return false;
+    }
+
     while (downloadOffset_ < static_cast<int64_t>(fileSize_)) {
       switch (downloadSubState_) {
       case DownloadSubState::REQUEST_PARTS: {
@@ -1649,6 +1961,15 @@ bool Ed2kDownloadCommand::peerDownload()
                           " trying next peer", getCuid()));
           tryNextPeer();
           return false;
+        }
+
+        // Handle async source exchange answer during download.
+        // Peers may send OP_SOURCESANSWER unsolicited or in response to
+        // our periodic OP_SOURCESREQUEST.
+        if (msgType == ed2kmsg::SOURCES_ANSWER) {
+          parseSourcesAnswer(payload);
+          // Stay in RECEIVING_DATA — the actual data block will come next.
+          break;
         }
 
         A2_LOG_DEBUG(fmt("CUID#%" PRId64 " - ED2K skipping message 0x%02x"

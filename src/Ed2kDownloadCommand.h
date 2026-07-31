@@ -141,6 +141,28 @@ private:
   bool sourceExchangeSent_;        // OP_SOURCESREQUEST sent to current peer
   Timer sourceExchangeTimer_;      // Tracks when to request sources again
 
+  // --- Periodic source refresh ---
+  Timer serverSourceRefreshTimer_; // When to re-ask server for sources
+  static const int SERVER_SOURCE_REFRESH_SECONDS = 120;
+  int maxSources_;                 // PREF_ED2K_MAX_SOURCES_PER_FILE cap
+
+  // --- Failed peer tracking (cooldown to avoid retrying dead peers) ---
+  struct FailedPeer {
+    std::string addr;
+    uint16_t port;
+    Timer failTime;
+  };
+  std::vector<FailedPeer> failedPeers_;
+  static const int PEER_COOLDOWN_SECONDS = 300; // 5-minute cooldown
+
+  // --- KAD UDP source lookup ---
+  std::shared_ptr<SocketCore> kadSocket_;
+  std::vector<std::pair<std::string, uint16_t>> kadNodes_;
+  size_t currentKadNodeIndex_;
+  Timer kadRefreshTimer_;
+  static const int KAD_REFRESH_SECONDS = 180;
+  bool kadBootstrapSent_;
+
   // --- Download progress ---
   int64_t downloadOffset_;
   int64_t lastMarkedLength_;
@@ -191,6 +213,45 @@ private:
 
   // Update PieceStorage to reflect downloaded bytes (for progress UI).
   void updateProgress();
+
+  // --- Source management helpers ---
+
+  // Mark a peer as failed (adds to failedPeers_ with current timestamp).
+  void markPeerFailed(const std::string& addr, uint16_t port);
+
+  // Check if a peer is in cooldown (recently failed).
+  bool isPeerInCooldown(const std::string& addr, uint16_t port);
+
+  // Add a source if not duplicate and not in cooldown. Respects maxSources_.
+  void addSource(const std::string& addr, uint16_t port);
+
+  // Send OP_SOURCESREQUEST to the currently connected peer.
+  // Used both in PEER_SOURCE_EXCHANGE state and periodically during
+  // PEER_DOWNLOAD to discover new sources.
+  void sendSourceExchangeRequest();
+
+  // Parse an OP_SOURCESANSWER payload and add sources.
+  // Returns the number of new sources added.
+  size_t parseSourcesAnswer(const std::vector<unsigned char>& payload);
+
+  // Periodically refresh sources from server during download.
+  // Called from PEER_DOWNLOAD when the refresh timer expires.
+  void checkServerSourceRefresh();
+
+  // --- KAD (Kademlia DHT) source lookup via UDP ---
+
+  // Initialize KAD UDP socket and bootstrap node list.
+  void initKad();
+
+  // Send a KAD bootstrap request to the current KAD node.
+  void kadBootstrap();
+
+  // Send a KAD_FIND_SOURCE request for the file hash.
+  void kadFindSource();
+
+  // Process incoming KAD UDP response (non-blocking).
+  // Returns true if a message was processed.
+  bool kadProcessResponse();
 
   // --- Low-level protocol helpers ---
   void queueMessage(unsigned char msgType, const unsigned char* payload,
