@@ -103,13 +103,21 @@ public:
   
   // Get default ED2K servers
   static void getDefaultServers(std::vector<Ed2kServerEntry>& servers);
-  
+
+  // Get default KAD (Kademlia) bootstrap nodes for source discovery.
+  // These are well-known KAD nodes used to bootstrap the DHT network.
+  static void getDefaultKadBootstrapNodes(std::vector<Ed2kServerEntry>& nodes);
+
+  // Parse user-configured KAD bootstrap node list (comma-separated host:port).
+  static void parseKadBootstrapNodes(const std::string& config,
+                                     std::vector<Ed2kServerEntry>& nodes);
+
   // Send ED2K login handshake
   static bool sendLoginHandshake(const std::shared_ptr<SocketCore>& socket, const std::shared_ptr<Option>& option);
-  
+
   // Search for a file on an ED2K server
   static bool searchFile(const std::shared_ptr<SocketCore>& socket, const Ed2kFileInfo& fileInfo);
-  
+
   // Get file sources from an ED2K server
   static bool getFileSources(const std::shared_ptr<SocketCore>& socket, const Ed2kFileInfo& fileInfo, std::vector<Ed2kSourceEntry>& sources);
 };

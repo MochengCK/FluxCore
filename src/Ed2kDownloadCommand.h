@@ -91,6 +91,7 @@ private:
     PEER_CONNECT,         // Initiate non-blocking TCP connection to a peer
     PEER_WAIT_CONNECT,    // Wait for non-blocking connect() to finish
     PEER_HANDSHAKE,       // Exchange hello messages with peer
+    PEER_SOURCE_EXCHANGE, // Ask connected peer for additional sources
     PEER_START_UPLOAD,    // Request upload slot from peer
     PEER_DOWNLOAD,        // Download file data from peer
     FINISHED,
@@ -132,6 +133,14 @@ private:
   std::vector<PeerSource> sources_;
   size_t currentSourceIndex_;
 
+  // --- Source discovery configuration (from options) ---
+  bool serverSourceEnabled_;       // PREF_ED2K_SERVER_SOURCE_ENABLED
+  bool sourceExchangeEnabled_;     // PREF_ED2K_SOURCE_EXCHANGE_ENABLED
+  bool kadEnabled_;                // PREF_ED2K_KAD_ENABLED
+  int sourceExchangeInterval_;     // PREF_ED2K_SOURCE_EXCHANGE_INTERVAL (seconds)
+  bool sourceExchangeSent_;        // OP_SOURCESREQUEST sent to current peer
+  Timer sourceExchangeTimer_;      // Tracks when to request sources again
+
   // --- Download progress ---
   int64_t downloadOffset_;
   int64_t lastMarkedLength_;
@@ -165,6 +174,7 @@ private:
   bool peerConnect();
   bool peerWaitConnect();
   bool peerHandshake();
+  bool peerSourceExchange();
   bool peerStartUpload();
   bool peerDownload();
 

@@ -535,6 +535,16 @@ extern PrefPtr PREF_ED2K_MAX_CONNECTIONS;
 extern PrefPtr PREF_ED2K_CONNECTION_TIMEOUT;
 // values: 1*digit
 extern PrefPtr PREF_ED2K_MAX_SOURCES_PER_FILE;
+// values: true | false — use ED2K server for source discovery
+extern PrefPtr PREF_ED2K_SERVER_SOURCE_ENABLED;
+// values: true | false — exchange sources with connected peers
+extern PrefPtr PREF_ED2K_SOURCE_EXCHANGE_ENABLED;
+// values: 1*digit — seconds between source-exchange requests
+extern PrefPtr PREF_ED2K_SOURCE_EXCHANGE_INTERVAL;
+// values: true | false — use KAD (Kademlia DHT) for source discovery
+extern PrefPtr PREF_ED2K_KAD_ENABLED;
+// values: comma-separated host:port list of KAD bootstrap nodes
+extern PrefPtr PREF_ED2K_KAD_BOOTSTRAP_NODES;
 
 /**
  * Metalink related preferences

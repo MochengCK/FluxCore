@@ -545,6 +545,17 @@ PrefPtr PREF_BT_SAVE_METADATA = makePref("bt-save-metadata");
 PrefPtr PREF_BT_METADATA_ONLY = makePref("bt-metadata-only");
 // values: true | false
 PrefPtr PREF_BT_ENABLE_LPD = makePref("bt-enable-lpd");
+// ED2K preferences
+PrefPtr PREF_ENABLE_ED2K = makePref("enable-ed2k");
+PrefPtr PREF_ED2K_LISTEN_PORT = makePref("ed2k-listen-port");
+PrefPtr PREF_ED2K_MAX_CONNECTIONS = makePref("ed2k-max-connections");
+PrefPtr PREF_ED2K_CONNECTION_TIMEOUT = makePref("ed2k-connection-timeout");
+PrefPtr PREF_ED2K_MAX_SOURCES_PER_FILE = makePref("ed2k-max-sources-per-file");
+PrefPtr PREF_ED2K_SERVER_SOURCE_ENABLED = makePref("ed2k-server-source-enabled");
+PrefPtr PREF_ED2K_SOURCE_EXCHANGE_ENABLED = makePref("ed2k-source-exchange-enabled");
+PrefPtr PREF_ED2K_SOURCE_EXCHANGE_INTERVAL = makePref("ed2k-source-exchange-interval");
+PrefPtr PREF_ED2K_KAD_ENABLED = makePref("ed2k-kad-enabled");
+PrefPtr PREF_ED2K_KAD_BOOTSTRAP_NODES = makePref("ed2k-kad-bootstrap-nodes");
 // values: string
 PrefPtr PREF_BT_LPD_INTERFACE = makePref("bt-lpd-interface");
 // values: 1*digit

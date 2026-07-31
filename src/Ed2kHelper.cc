@@ -36,6 +36,8 @@
 
 #include <cstring>
 #include <algorithm>
+#include <sstream>
+#include <string>
 
 #include "util.h"
 #include "a2functional.h"
@@ -429,6 +431,72 @@ void Ed2kHelper::getDefaultServers(std::vector<Ed2kServerEntry>& servers)
   servers.push_back({"185.25.48.89", 18357});   // Akteon Server
   servers.push_back({"213.252.245.239", 33333}); // Astra-5
   servers.push_back({"185.237.185.226", 31031}); // Gaal
+}
+
+void Ed2kHelper::getDefaultKadBootstrapNodes(std::vector<Ed2kServerEntry>& nodes)
+{
+  // Well-known KAD bootstrap nodes (last updated: 2026-05-29).
+  // These nodes help bootstrap the Kademlia DHT network for source
+  // discovery without relying on ED2K servers.
+  // KAD uses UDP port 4672 by default.
+  nodes.push_back({"62.104.19.219", 4672});      // eMule KAD node
+  nodes.push_back({"178.175.142.75", 4672});     // eMule KAD node
+  nodes.push_back({"217.79.186.35", 4672});      // eMule KAD node
+  nodes.push_back({"46.105.104.104", 4672});     // eMule KAD node
+  nodes.push_back({"185.25.48.89", 4672});       // eMule KAD node
+}
+
+void Ed2kHelper::parseKadBootstrapNodes(const std::string& config,
+                                         std::vector<Ed2kServerEntry>& nodes)
+{
+  nodes.clear();
+  if (config.empty()) {
+    return;
+  }
+
+  std::string s = config;
+  // Normalize separators: newlines → comma
+  std::replace(s.begin(), s.end(), '\n', ',');
+  std::replace(s.begin(), s.end(), ';', ',');
+
+  std::stringstream ss(s);
+  std::string token;
+  while (std::getline(ss, token, ',')) {
+    // Trim whitespace
+    size_t start = token.find_first_not_of(" \t\r");
+    if (start == std::string::npos) continue;
+    size_t end = token.find_last_not_of(" \t\r");
+    token = token.substr(start, end - start + 1);
+    if (token.empty()) continue;
+
+    // Find port separator ':'
+    size_t colonPos = token.rfind(':');
+    if (colonPos == std::string::npos || colonPos == 0) {
+      // No port — skip, KAD nodes require explicit port
+      continue;
+    }
+
+    std::string host = token.substr(0, colonPos);
+    std::string portStr = token.substr(colonPos + 1);
+    uint16_t port = 0;
+    try {
+      port = static_cast<uint16_t>(std::stoul(portStr));
+    }
+    catch (...) {
+      continue;
+    }
+    if (port == 0) continue;
+
+    Ed2kServerEntry node;
+    node.addr = host;
+    node.port = port;
+    nodes.push_back(node);
+  }
+
+  // If parsing yielded nothing, fall back to defaults.
+  if (nodes.empty()) {
+    getDefaultKadBootstrapNodes(nodes);
+  }
 }
 
 bool Ed2kHelper::sendLoginHandshake(
