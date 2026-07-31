@@ -57,6 +57,7 @@
 #include "DownloadContext.h"
 #include "PieceStorage.h"
 #include "DiskAdaptor.h"
+#include "DefaultBtProgressInfoFile.h"
 #include "A2STR.h"
 
 namespace aria2 {
@@ -133,7 +134,22 @@ bool Ed2kInitiateConnectionCommand::execute()
     try {
       auto ps = getRequestGroup()->getPieceStorage();
       if (ps && ps->getDiskAdaptor()) {
-        ps->getDiskAdaptor()->openFile();
+        // Create and set the progress info file (.aria2 control file)
+        // so that saveControlFile() works during shutdown and progress
+        // can be resumed on restart.
+        auto progressInfoFile = std::make_shared<DefaultBtProgressInfoFile>(
+            dc, ps, getOption().get());
+        progressInfoFile->save();
+        getRequestGroup()->setProgressInfoFile(progressInfoFile);
+
+        // Load existing progress if .aria2 file exists (restart scenario)
+        if (progressInfoFile->exists()) {
+          progressInfoFile->load();
+          ps->getDiskAdaptor()->openExistingFile();
+        }
+        else {
+          ps->getDiskAdaptor()->openFile();
+        }
       }
     }
     catch (RecoverableException& e) {

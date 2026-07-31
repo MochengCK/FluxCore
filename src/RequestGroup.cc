@@ -1425,7 +1425,7 @@ bool RequestGroup::doesUploadSpeedExceed()
 
 void RequestGroup::saveControlFile() const
 {
-  if (saveControlFile_) {
+  if (saveControlFile_ && progressInfoFile_) {
     if (pieceStorage_) {
       pieceStorage_->flushWrDiskCacheEntry(false);
       pieceStorage_->getDiskAdaptor()->flushOSBuffers();
@@ -1436,7 +1436,9 @@ void RequestGroup::saveControlFile() const
 
 void RequestGroup::removeControlFile() const
 {
-  progressInfoFile_->removeFile();
+  if (progressInfoFile_) {
+    progressInfoFile_->removeFile();
+  }
 }
 
 void RequestGroup::setDownloadContext(
