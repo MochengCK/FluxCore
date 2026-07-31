@@ -127,7 +127,7 @@ bool Ed2kDownloadCommand::execute()
                    getCuid(), static_cast<int>(state_), currentChunk_,
                    totalChunks_));
 
-  if (requestGroup_->downloadFinished() || requestGroup_->isHaltRequested()) {
+  if (getRequestGroup()->downloadFinished() || getRequestGroup()->isHaltRequested()) {
     return true;
   }
 
@@ -571,7 +571,7 @@ bool Ed2kDownloadCommand::writeChunkToDisk(int chunkIndex,
 
   try {
     int64_t offset = static_cast<int64_t>(chunkIndex) * ED2K_CHUNK_SIZE;
-    auto diskAdaptor = requestGroup_->getPieceStorage()->getDiskAdaptor();
+    auto diskAdaptor = getRequestGroup()->getPieceStorage()->getDiskAdaptor();
     diskAdaptor->writeData(data, len, offset);
     return true;
   }

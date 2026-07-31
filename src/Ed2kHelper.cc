@@ -343,7 +343,7 @@ const std::vector<uint16_t>& Ed2kHelper::getDefaultServerPorts()
 {
   static const std::vector<uint16_t> ports = {
     4242, 4661, 4662, 4665, 4672, 4711, 7654, 8767,
-    9500, 11111, 22222, 33333, 44444, 55555, 66666
+    9500, 11111, 22222, 33333, 44444, 55555
   };
   return ports;
 }

@@ -50,6 +50,9 @@ public:
 
   virtual bool execute() CXX11_OVERRIDE;
 
+protected:
+  virtual bool executeInternal() CXX11_OVERRIDE;
+
   // Set file hash and size for ED2K download
   void setFileHash(const std::string& hash);
   void setFileSize(uint64_t size);
