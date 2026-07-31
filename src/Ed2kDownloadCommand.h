@@ -20,7 +20,7 @@
  *
  * In addition, as a special exception, the copyright holders give
  * permission to link the code of portions of this program with the
- * OpenSSL library under certain conditions as described in each
+ * OpenSSL library under certain conditions; described in each
  * individual source file, and distribute linked combinations
  * including the two.
  * You must obey the GNU General Public License in all respects
@@ -36,6 +36,7 @@
 #define D_ED2K_DOWNLOAD_COMMAND_H
 
 #include "AbstractCommand.h"
+#include "wallclock.h"
 
 namespace aria2 {
 
@@ -45,15 +46,21 @@ namespace aria2 {
 // The eDonkey protocol is P2P: the server only provides source lists
 // (peers who have the file). Actual file data is downloaded from peers.
 //
-// Flow:
-//   1. Connect to server (done by Ed2kInitiateConnectionCommand)
+// State machine flow:
+//   1. SERVER_CONNECT: establish TCP connection to an ED2K server
 //   2. SERVER_LOGIN: send OP_LOGINREQUEST, receive OP_IDCHANGE
 //   3. SERVER_GET_SOURCES: send OP_GETFILESOURCES, receive OP_FOUNDSOURCES
-//   4. PEER_CONNECT: establish TCP connection to a peer from the source list
-//   5. PEER_HANDSHAKE: send OP_HELLO, receive OP_HELLOANSWER
-//   6. PEER_START_UPLOAD: send OP_STARTUPLOADREQ, receive OP_ACCEPTUPLOADREQ
-//   7. PEER_DOWNLOAD: send OP_REQUESTPARTS, receive OP_SENDINGPART data
-//   8. Write data to disk, update progress, repeat until file complete
+//      - If no sources found, wait and retry (SERVER_WAIT_SOURCES)
+//   4. PEER_CONNECT: initiate non-blocking TCP connection to a peer
+//   5. PEER_WAIT_CONNECT: wait for the non-blocking connect() to complete
+//      (checks isWritable(0), then SO_ERROR to detect connection failure)
+//   6. PEER_HANDSHAKE: send OP_HELLO, receive OP_HELLOANSWER
+//   7. PEER_START_UPLOAD: send OP_STARTUPLOADREQ, receive OP_ACCEPTUPLOADREQ
+//   8. PEER_DOWNLOAD: send OP_REQUESTPARTS, receive OP_SENDINGPART data
+//   9. Write data to disk, update progress, repeat until file complete
+//
+// If all peer sources are exhausted, the command reconnects to the server
+// to fetch fresh sources (up to MAX_SERVER_ROUNDS times).
 class Ed2kDownloadCommand : public AbstractCommand {
 public:
   Ed2kDownloadCommand(cuid_t cuid, const std::shared_ptr<Request>& req,
@@ -68,28 +75,29 @@ public:
   void setFileHash(const std::string& hash);
   void setFileSize(uint64_t size);
   void setServerAddr(const std::string& addr, uint16_t port);
+  // Set the list of ED2K servers to try (for server reconnection).
+  void setServerList(const std::vector<std::pair<std::string, uint16_t>>& servers);
 
 protected:
   virtual bool executeInternal() CXX11_OVERRIDE;
 
 private:
-  // Main protocol states. The command transitions through these states
-  // sequentially: server phase (login + source discovery) then peer phase
-  // (handshake + upload + download).
+  // Main protocol states.
   enum class Ed2kState {
-    SERVER_LOGIN,        // Login to ED2K server
-    SERVER_GET_SOURCES,  // Request file sources from server
-    PEER_CONNECT,        // Establish TCP connection to a peer
-    PEER_HANDSHAKE,      // Exchange hello messages with peer
-    PEER_START_UPLOAD,   // Request upload slot from peer
-    PEER_DOWNLOAD,       // Download file data from peer
+    SERVER_CONNECT,       // Establish TCP connection to ED2K server
+    SERVER_LOGIN,         // Login to ED2K server
+    SERVER_GET_SOURCES,   // Request file sources from server
+    SERVER_WAIT_SOURCES,  // No sources yet — wait and retry
+    PEER_CONNECT,         // Initiate non-blocking TCP connection to a peer
+    PEER_WAIT_CONNECT,    // Wait for non-blocking connect() to finish
+    PEER_HANDSHAKE,       // Exchange hello messages with peer
+    PEER_START_UPLOAD,    // Request upload slot from peer
+    PEER_DOWNLOAD,        // Download file data from peer
     FINISHED,
     FAILURE
   };
 
-  // Sub-states within PEER_DOWNLOAD. Because the socket is non-blocking,
-  // execute() may return false mid-block; these sub-states ensure we
-  // resume correctly.
+  // Sub-states within PEER_DOWNLOAD.
   enum class DownloadSubState {
     REQUEST_PARTS,   // Need to send OP_REQUESTPARTS for current block
     RECEIVING_DATA   // Waiting for OP_SENDINGPART response
@@ -104,9 +112,17 @@ private:
   Ed2kState state_;
   DownloadSubState downloadSubState_;
 
-  // --- Server info (for OP_HELLO) ---
+  // --- Server info ---
   std::string serverAddr_;
   uint16_t serverPort_;
+  std::vector<std::pair<std::string, uint16_t>> serverList_;
+  size_t currentServerIndex_;
+  int serverRound_;          // How many times we've cycled through servers
+  static const int MAX_SERVER_ROUNDS = 5;
+
+  // --- Source wait retry ---
+  Timer sourceWaitStart_;
+  static const int SOURCE_WAIT_SECONDS = 30; // Wait between source requests
 
   // --- Source/peer management ---
   struct PeerSource {
@@ -117,17 +133,21 @@ private:
   size_t currentSourceIndex_;
 
   // --- Download progress ---
-  int64_t downloadOffset_;  // Current byte offset in the file
-  int64_t lastMarkedLength_;  // Last length passed to markPiecesDone()
+  int64_t downloadOffset_;
+  int64_t lastMarkedLength_;
 
-  // --- Message-sent flags (prevent re-sending on execute() re-entry) ---
+  // --- Message-sent flags ---
   bool loginSent_;
   bool sourcesRequested_;
   bool helloSent_;
   bool uploadReqSent_;
   bool partsRequested_;
 
-  // --- Persistent I/O buffers (survive across execute() calls) ---
+  // Set true when flushSendBuffer() hits a real socket error (not EAGAIN).
+  // The state machine checks this to decide whether to switch peer/server.
+  bool connectionError_;
+
+  // --- Persistent I/O buffers ---
   std::vector<unsigned char> sendBuffer_;
   std::vector<unsigned char> recvBuffer_;
 
@@ -136,18 +156,25 @@ private:
   int64_t requestEnd_;
 
   // --- Server phase methods ---
+  bool serverConnect();
   bool serverLogin();
   bool serverGetSources();
+  bool serverWaitSources();
 
   // --- Peer phase methods ---
   bool peerConnect();
+  bool peerWaitConnect();
   bool peerHandshake();
   bool peerStartUpload();
   bool peerDownload();
 
-  // Advance to the next peer source. If no more sources, transitions
-  // to FAILURE state.
+  // Advance to the next peer source. If no more sources, reconnects
+  // to the server for fresh sources (up to MAX_SERVER_ROUNDS).
   void tryNextPeer();
+
+  // Reconnect to the next server in serverList_ to fetch fresh sources.
+  // Returns false if all servers and rounds are exhausted (FAILURE).
+  bool reconnectServer();
 
   // Write received data block to disk at the given offset.
   bool writeBlockToDisk(int64_t offset, const unsigned char* data, size_t len);
@@ -156,16 +183,9 @@ private:
   void updateProgress();
 
   // --- Low-level protocol helpers ---
-  // Append a complete ED2K message (4-byte LE length + 0xE3 protocol byte
-  // + 1-byte type + payload) to sendBuffer_.
   void queueMessage(unsigned char msgType, const unsigned char* payload,
                     size_t payloadLen);
-  // Write as much of sendBuffer_ as the socket accepts.
-  // Returns true when the buffer is fully flushed.
   bool flushSendBuffer();
-  // Read available data into recvBuffer_ and, if a complete message is
-  // present, extract it into msgType/payload.
-  // Returns true on success, false if no complete message is available yet.
   bool tryReceiveMessage(unsigned char& msgType,
                          std::vector<unsigned char>& payload);
 };

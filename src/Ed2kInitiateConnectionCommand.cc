@@ -268,6 +268,18 @@ bool Ed2kInitiateConnectionCommand::execute()
     c->setFileHash(fileInfo.filehash);
     c->setFileSize(fileInfo.filesize);
     c->setServerAddr(connectedAddr, connectedPort);
+
+    // Pass the full server list so Ed2kDownloadCommand can rotate to
+    // other servers if the initial one fails (non-blocking connect may
+    // report EINPROGRESS here but fail later with SO_ERROR).
+    {
+      std::vector<std::pair<std::string, uint16_t>> serverList;
+      for (const auto& s : servers) {
+        serverList.push_back({s.addr, s.port});
+      }
+      c->setServerList(serverList);
+    }
+
     c->setStatus(Command::STATUS_ONESHOT_REALTIME);
     getDownloadEngine()->setNoWait(true);
     getDownloadEngine()->addCommand(std::move(c));
