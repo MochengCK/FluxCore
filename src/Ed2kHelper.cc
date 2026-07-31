@@ -293,17 +293,17 @@ std::unique_ptr<Ed2kLinkInfo> Ed2kHelper::parseLink(const std::string& uri)
 bool Ed2kHelper::isEd2kLink(const std::string& uri)
 {
   // ED2K links start with ed2k://|file|
-  return uri.size() > 11 &&
-         uri.substr(0, 9) == "ed2k://|" &&
-         uri.substr(9, 5) == "file|";
+  // "ed2k://|file|" is 13 characters
+  return uri.size() >= 13 &&
+         uri.compare(0, 13, "ed2k://|file|") == 0;
 }
 
 bool Ed2kHelper::isEd2kServerUri(const std::string& uri)
 {
   // ED2K server URIs: ed2k://|server|ip|port|/
-  return uri.size() > 13 &&
-         uri.substr(0, 9) == "ed2k://|" &&
-         uri.substr(9, 7) == "server|";
+  // "ed2k://|server|" is 15 characters
+  return uri.size() >= 15 &&
+         uri.compare(0, 15, "ed2k://|server|") == 0;
 }
 
 std::string Ed2kHelper::computeMd4(const unsigned char* data, size_t length)

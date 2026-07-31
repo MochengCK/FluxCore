@@ -180,7 +180,7 @@ bool ProtocolDetector::guessMetalinkFile(const std::string& uri) const
 
 bool ProtocolDetector::guessEd2kLink(const std::string& uri) const
 {
-  return uri.size() > 9 && uri.substr(0, 9) == "ed2k://|" &&
+  return uri.size() >= 8 && uri.compare(0, 8, "ed2k://|") == 0 &&
          uri.find("|file|") != std::string::npos;
 }
 
