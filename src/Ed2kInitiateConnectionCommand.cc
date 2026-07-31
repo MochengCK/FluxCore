@@ -208,7 +208,7 @@ bool Ed2kInitiateConnectionCommand::execute()
     
     // If no server was specified in the link, use default servers
     if (servers.empty()) {
-      Ed2kHelper::getDefaultServers(servers);
+      Ed2kHelper::getDefaultServers(servers, getOption().get());
       A2_LOG_INFO(fmt("CUID#%" PRId64 " - Using %lu default ED2K servers",
                       getCuid(),
                       static_cast<unsigned long>(servers.size())));

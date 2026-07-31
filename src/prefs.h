@@ -545,6 +545,8 @@ extern PrefPtr PREF_ED2K_SOURCE_EXCHANGE_INTERVAL;
 extern PrefPtr PREF_ED2K_KAD_ENABLED;
 // values: comma-separated host:port list of KAD bootstrap nodes
 extern PrefPtr PREF_ED2K_KAD_BOOTSTRAP_NODES;
+// values: comma-separated host:port list of ED2K servers
+extern PrefPtr PREF_ED2K_DEFAULT_SERVERS;
 
 /**
  * Metalink related preferences

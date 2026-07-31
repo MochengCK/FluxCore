@@ -2104,6 +2104,15 @@ std::vector<OptionHandler*> OptionHandlerFactory::createOptionHandlers()
     op->setChangeGlobalOption(true);
     handlers.push_back(op);
   }
+  {
+    OptionHandler* op(new DefaultOptionHandler(PREF_ED2K_DEFAULT_SERVERS,
+                                               NO_DESCRIPTION,
+                                               NO_DEFAULT_VALUE));
+    op->addTag(TAG_ADVANCED);
+    op->setInitialOption(true);
+    op->setChangeGlobalOption(true);
+    handlers.push_back(op);
+  }
 
   return handlers;
 }

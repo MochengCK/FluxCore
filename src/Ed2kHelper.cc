@@ -43,6 +43,7 @@
 #include "a2functional.h"
 #include "SocketCore.h"
 #include "Option.h"
+#include "prefs.h"
 #include "Logger.h"
 #include "LogFactory.h"
 #include "fmt.h"
@@ -420,17 +421,74 @@ bool Ed2kHelper::parseLink(const std::string& uri, Ed2kFileInfo& info)
   return true;
 }
 
-void Ed2kHelper::getDefaultServers(std::vector<Ed2kServerEntry>& servers)
+void Ed2kHelper::getDefaultServers(std::vector<Ed2kServerEntry>& servers,
+                                    const Option* opt)
 {
-  // Add well-known active ED2K servers (last updated: 2026-05-29)
+  // If user has configured a server list via ed2k-default-servers, use it
+  if (opt) {
+    const std::string& config = opt->get(PREF_ED2K_DEFAULT_SERVERS);
+    if (!config.empty()) {
+      parseDefaultServers(config, servers);
+      if (!servers.empty()) {
+        return;
+      }
+    }
+  }
+
+  // Fall back to built-in defaults (last updated: 2026-07-31)
   // Source: https://www.shortypower.org/
-  servers.push_back({"45.82.80.155", 5687});   // eMule Security
-  servers.push_back({"176.123.5.89", 4725});    // eMule Sunrise
-  servers.push_back({"91.208.162.87", 4232});   // !! Sharing-Devils No.4 !!
+  servers.push_back({"176.123.5.89", 4725});     // eMule Sunrise
+  servers.push_back({"45.82.80.155", 5687});     // eMule Security
+  servers.push_back({"91.208.162.87", 4232});    // Sharing-Devils No.4
+  servers.push_back({"37.15.61.236", 4232});     // Mazinga Server
+  servers.push_back({"85.121.5.137", 4232});     // Sharing-Devils No.2
   servers.push_back({"213.252.245.239", 43333}); // Astra-3
-  servers.push_back({"185.25.48.89", 18357});   // Akteon Server
+  servers.push_back({"185.25.48.89", 18357});    // Akteon Server
   servers.push_back({"213.252.245.239", 33333}); // Astra-5
-  servers.push_back({"185.237.185.226", 31031}); // Gaal
+  servers.push_back({"185.237.185.226", 31031}); // Gaal Server
+}
+
+void Ed2kHelper::parseDefaultServers(const std::string& config,
+                                      std::vector<Ed2kServerEntry>& servers)
+{
+  servers.clear();
+  if (config.empty()) {
+    return;
+  }
+
+  std::string s = config;
+  // Normalize separators: newlines → comma
+  std::replace(s.begin(), s.end(), '\n', ',');
+
+  std::istringstream ss(s);
+  std::string token;
+  while (std::getline(ss, token, ',')) {
+    // Trim whitespace
+    token.erase(0, token.find_first_not_of(" \t\r\n"));
+    token.erase(token.find_last_not_of(" \t\r\n") + 1);
+    if (token.empty()) {
+      continue;
+    }
+
+    size_t colonPos = token.rfind(':');
+    if (colonPos == std::string::npos || colonPos == 0) {
+      continue;
+    }
+
+    std::string host = token.substr(0, colonPos);
+    std::string portStr = token.substr(colonPos + 1);
+
+    // Validate port
+    try {
+      unsigned long port = std::stoul(portStr);
+      if (port > 0 && port <= 65535) {
+        servers.push_back({host, static_cast<uint16_t>(port)});
+      }
+    }
+    catch (...) {
+      // Invalid port, skip
+    }
+  }
 }
 
 void Ed2kHelper::getDefaultKadBootstrapNodes(std::vector<Ed2kServerEntry>& nodes)

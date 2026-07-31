@@ -556,6 +556,7 @@ PrefPtr PREF_ED2K_SOURCE_EXCHANGE_ENABLED = makePref("ed2k-source-exchange-enabl
 PrefPtr PREF_ED2K_SOURCE_EXCHANGE_INTERVAL = makePref("ed2k-source-exchange-interval");
 PrefPtr PREF_ED2K_KAD_ENABLED = makePref("ed2k-kad-enabled");
 PrefPtr PREF_ED2K_KAD_BOOTSTRAP_NODES = makePref("ed2k-kad-bootstrap-nodes");
+PrefPtr PREF_ED2K_DEFAULT_SERVERS = makePref("ed2k-default-servers");
 // values: string
 PrefPtr PREF_BT_LPD_INTERFACE = makePref("bt-lpd-interface");
 // values: 1*digit

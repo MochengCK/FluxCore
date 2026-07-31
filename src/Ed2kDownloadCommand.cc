@@ -707,7 +707,7 @@ bool Ed2kDownloadCommand::serverConnect()
     }
     if (serverList_.empty()) {
       std::vector<Ed2kServerEntry> defaults;
-      Ed2kHelper::getDefaultServers(defaults);
+      Ed2kHelper::getDefaultServers(defaults, getOption().get());
       for (const auto& s : defaults) {
         serverList_.push_back({s.addr, s.port});
       }

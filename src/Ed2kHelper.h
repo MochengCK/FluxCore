@@ -101,8 +101,14 @@ public:
   // Parse ED2K link into Ed2kFileInfo struct
   static bool parseLink(const std::string& uri, Ed2kFileInfo& info);
   
-  // Get default ED2K servers
-  static void getDefaultServers(std::vector<Ed2kServerEntry>& servers);
+  // Get default ED2K servers. If opt is provided and ed2k-default-servers
+  // is configured, parse that list; otherwise fall back to built-in defaults.
+  static void getDefaultServers(std::vector<Ed2kServerEntry>& servers,
+                                 const Option* opt = nullptr);
+
+  // Parse user-configured ED2K server list (comma-separated host:port).
+  static void parseDefaultServers(const std::string& config,
+                                   std::vector<Ed2kServerEntry>& servers);
 
   // Get default KAD (Kademlia) bootstrap nodes for source discovery.
   // These are well-known KAD nodes used to bootstrap the DHT network.
