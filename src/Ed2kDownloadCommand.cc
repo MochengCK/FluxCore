@@ -36,6 +36,7 @@
 
 #include <cstring>
 #include <vector>
+#include <arpa/inet.h>
 
 #include "Request.h"
 #include "SocketCore.h"
@@ -64,29 +65,32 @@
 namespace aria2 {
 
 // ED2K protocol constants
-static const int64_t ED2K_CHUNK_SIZE = 9500000;
+// ED2K_PART_SIZE: size of a "part" (chunk) for MD4 verification = 9.5MB
+// ED2K_BLOCK_SIZE: standard block size for data requests = 180KB
+static const int64_t ED2K_PART_SIZE = 9500000;
+static const int64_t ED2K_BLOCK_SIZE = 184320;
 static const size_t ED2K_HEADER_LEN = 4;
 static const size_t ED2K_MAX_MSG_SIZE = 1024 * 1024 * 10; // 10MB max
 
 // ED2K protocol message types
+// Server protocol
 namespace ed2kmsg {
-  constexpr unsigned char LOGIN_REQUEST = 0x01;
-  constexpr unsigned char LOGIN_ACCEPT = 0x02;
-  constexpr unsigned char LOGIN_REJECT = 0x03;
-  constexpr unsigned char FILE_REQUEST = 0x18;
-  constexpr unsigned char FILE_ANSWER = 0x19;
-  constexpr unsigned char START_UPLOAD_REQ = 0x40;
-  constexpr unsigned char ACCEPT_UPLOAD_REQ = 0x41;
-  constexpr unsigned char STOP_UPLOAD_REQ = 0x42;
-  constexpr unsigned char SENDING_PART = 0x46;
-  constexpr unsigned char STOP_UPLOAD = 0x15;
-  constexpr unsigned char START_UPLOAD = 0x14;
-  constexpr unsigned char ACCEPT_UPLOAD = 0x16;
-  constexpr unsigned char CHANGE_SLOT = 0x32;
-  constexpr unsigned char CALLBACK_REQ = 0x38;
-  constexpr unsigned char END_OF_FILE = 0x4B;
-  constexpr unsigned char PART_HASH_SET = 0x47;
-} // namespace ed2kmsg
+  constexpr unsigned char LOGIN_REQUEST    = 0x01; // OP_LOGINREQUEST
+  constexpr unsigned char ID_CHANGE        = 0x02; // OP_IDCHANGE (server login response)
+  constexpr unsigned char SERVER_MESSAGE   = 0x04; // OP_SERVERMESSAGE
+  constexpr unsigned char GET_FILE_SOURCES = 0x4A; // OP_GETFILESOURCES
+  constexpr unsigned char FOUND_SOURCES    = 0x42; // OP_FOUNDSOURCES
+
+  // Peer-to-peer protocol (same opcodes, different meaning in peer context)
+  constexpr unsigned char HELLO            = 0x01; // OP_HELLO
+  constexpr unsigned char HELLO_ANSWER     = 0x32; // OP_HELLOANSWER
+  constexpr unsigned char START_UPLOAD_REQ = 0x40; // OP_STARTUPLOADREQ
+  constexpr unsigned char ACCEPT_UPLOAD_REQ= 0x41; // OP_ACCEPTUPLOADREQ
+  constexpr unsigned char END_UPLOAD_REQ   = 0x42; // OP_ENDUPLOADREQ (peer context)
+  constexpr unsigned char SENDING_PART     = 0x46; // OP_SENDINGPART
+  constexpr unsigned char REQUEST_PARTS    = 0x47; // OP_REQUESTPARTS
+  constexpr unsigned char QUEUE_POSITION   = 0x36; // OP_QUEUERANKING
+}
 
 Ed2kDownloadCommand::Ed2kDownloadCommand(
     cuid_t cuid, const std::shared_ptr<Request>& req,
@@ -96,14 +100,20 @@ Ed2kDownloadCommand::Ed2kDownloadCommand(
       fileHash_(),
       fileSize_(0),
       downloadedLength_(0),
-      socket_(s),
-      state_(Ed2kState::HANDSHAKE),
-      downloadSubState_(DownloadSubState::REQUEST_UPLOAD),
-      currentChunk_(0),
-      totalChunks_(0),
-      handshakeSent_(false),
-      fileRequestSent_(false)
+      state_(Ed2kState::SERVER_LOGIN),
+      downloadSubState_(DownloadSubState::REQUEST_PARTS),
+      serverPort_(0),
+      currentSourceIndex_(0),
+      downloadOffset_(0),
+      loginSent_(false),
+      sourcesRequested_(false),
+      helloSent_(false),
+      uploadReqSent_(false),
+      partsRequested_(false),
+      requestStart_(0),
+      requestEnd_(0)
 {
+  setTimeout(std::chrono::seconds(120));
   setReadCheckSocket(getSocket());
 }
 
@@ -111,9 +121,7 @@ Ed2kDownloadCommand::~Ed2kDownloadCommand() = default;
 
 bool Ed2kDownloadCommand::executeInternal()
 {
-  // ED2K uses a custom execute() flow that handles its own state machine.
-  // This is not called because execute() override bypasses
-  // AbstractCommand::execute().
+  // Not used — execute() is overridden and handles the full state machine.
   return true;
 }
 
@@ -125,28 +133,45 @@ void Ed2kDownloadCommand::setFileHash(const std::string& hash)
 void Ed2kDownloadCommand::setFileSize(uint64_t size)
 {
   fileSize_ = size;
-  if (size > 0) {
-    totalChunks_ = static_cast<int>((size + ED2K_CHUNK_SIZE - 1) /
-                                    ED2K_CHUNK_SIZE);
-  }
 }
 
+void Ed2kDownloadCommand::setServerAddr(const std::string& addr,
+                                         uint16_t port)
+{
+  serverAddr_ = addr;
+  serverPort_ = port;
+}
+
+// ============================================================================
+// Main execute() — state machine driver
+// ============================================================================
 bool Ed2kDownloadCommand::execute()
 {
   A2_LOG_DEBUG(fmt("CUID#%" PRId64 " - Ed2kDownloadCommand::execute()"
-                   " state=%d chunk=%d/%d",
-                   getCuid(), static_cast<int>(state_), currentChunk_,
-                   totalChunks_));
+                   " state=%d offset=%" PRId64 "/%" PRId64,
+                   getCuid(), static_cast<int>(state_),
+                   downloadOffset_, static_cast<int64_t>(fileSize_)));
 
   if (getRequestGroup()->downloadFinished() ||
       getRequestGroup()->isHaltRequested()) {
     return true;
   }
 
+  // Check for inactivity timeout. The checkpoint is reset whenever data
+  // is received (tryReceiveMessage) or sent (flushSendBuffer), so this
+  // detects stalls where neither side makes progress.
+  if (getCheckPoint().difference() > getTimeout()) {
+    throw DL_RETRY_EX2(
+        fmt("CUID#%" PRId64 " - ED2K timeout (state=%d, no data for %llds)",
+            getCuid(), static_cast<int>(state_),
+            static_cast<long long>(
+                std::chrono::duration_cast<std::chrono::seconds>(
+                    getCheckPoint().difference()).count())),
+        error_code::TIME_OUT);
+  }
+
   try {
-    // Flush any pending outgoing data first. This ensures that partial
-    // writes from a previous execute() call complete before we try to
-    // read or queue new messages.
+    // Flush any pending outgoing data first.
     if (!flushSendBuffer()) {
       setWriteCheckSocket(getSocket());
       addCommandSelf();
@@ -154,39 +179,87 @@ bool Ed2kDownloadCommand::execute()
     }
     disableWriteCheckSocket();
 
-    switch (state_) {
-    case Ed2kState::HANDSHAKE:
-      if (!handshake()) {
-        setReadCheckSocket(getSocket());
+    // State machine: each method returns true when its phase is complete
+    // (and has updated state_ to the next phase), or false when it needs
+    // to wait for I/O. We use a loop with continue for fall-through so
+    // completed phases transition immediately without waiting for the
+    // next execute() call.
+    while (true) {
+      switch (state_) {
+      case Ed2kState::SERVER_LOGIN:
+        if (!serverLogin()) {
+          setReadCheckSocket(getSocket());
+          addCommandSelf();
+          return false;
+        }
+        state_ = Ed2kState::SERVER_GET_SOURCES;
+        continue;
+
+      case Ed2kState::SERVER_GET_SOURCES:
+        if (!serverGetSources()) {
+          setReadCheckSocket(getSocket());
+          addCommandSelf();
+          return false;
+        }
+        state_ = Ed2kState::PEER_CONNECT;
+        continue;
+
+      case Ed2kState::PEER_CONNECT:
+        // peerConnect() always returns false — it either initiates a
+        // non-blocking connection (setting state_ = PEER_HANDSHAKE) or
+        // calls tryNextPeer() (setting state_ = PEER_CONNECT).
+        peerConnect();
         addCommandSelf();
         return false;
+
+      case Ed2kState::PEER_HANDSHAKE:
+        if (!peerHandshake()) {
+          // Only set read check if still in handshake state.
+          // tryNextPeer() may have changed state_ to PEER_CONNECT,
+          // in which case we must not set read check on the dead socket.
+          if (state_ == Ed2kState::PEER_HANDSHAKE) {
+            setReadCheckSocket(getSocket());
+          }
+          addCommandSelf();
+          return false;
+        }
+        state_ = Ed2kState::PEER_START_UPLOAD;
+        continue;
+
+      case Ed2kState::PEER_START_UPLOAD:
+        if (!peerStartUpload()) {
+          if (state_ == Ed2kState::PEER_START_UPLOAD) {
+            setReadCheckSocket(getSocket());
+          }
+          addCommandSelf();
+          return false;
+        }
+        state_ = Ed2kState::PEER_DOWNLOAD;
+        downloadSubState_ = DownloadSubState::REQUEST_PARTS;
+        continue;
+
+      case Ed2kState::PEER_DOWNLOAD:
+        if (!peerDownload()) {
+          if (state_ == Ed2kState::PEER_DOWNLOAD) {
+            setReadCheckSocket(getSocket());
+          }
+          addCommandSelf();
+          return false;
+        }
+        state_ = Ed2kState::FINISHED;
+        continue;
+
+      case Ed2kState::FINISHED:
+        A2_LOG_INFO(fmt("CUID#%" PRId64 " - ED2K download completed"
+                         " (%" PRId64 " bytes)",
+                         getCuid(), downloadedLength_));
+        return true;
+
+      case Ed2kState::FAILURE:
+      default:
+        throw DL_ABORT_EX2("ED2K download failed",
+                           error_code::UNKNOWN_ERROR);
       }
-      state_ = Ed2kState::FILE_INFO;
-      // Fall through
-    case Ed2kState::FILE_INFO:
-      if (!requestFileInfo()) {
-        setReadCheckSocket(getSocket());
-        addCommandSelf();
-        return false;
-      }
-      state_ = Ed2kState::DOWNLOADING;
-      // Fall through
-    case Ed2kState::DOWNLOADING:
-      if (!receiveData()) {
-        setReadCheckSocket(getSocket());
-        addCommandSelf();
-        return false;
-      }
-      state_ = Ed2kState::FINISHED;
-      // Fall through
-    case Ed2kState::FINISHED:
-      A2_LOG_INFO(fmt("CUID#%" PRId64 " - ED2K download completed",
-                      getCuid()));
-      return true;
-    case Ed2kState::FAILURE:
-    default:
-      throw DL_ABORT_EX2("ED2K download error",
-                         error_code::UNKNOWN_ERROR);
     }
   }
   catch (DlAbortEx& err) {
@@ -218,23 +291,29 @@ bool Ed2kDownloadCommand::execute()
   }
 }
 
+// ============================================================================
+// Low-level protocol helpers
+// ============================================================================
+
 void Ed2kDownloadCommand::queueMessage(unsigned char msgType,
                                        const unsigned char* payload,
                                        size_t payloadLen)
 {
   // ED2K message format:
-  // [4 bytes: message length (little-endian, includes type byte)]
+  // [4 bytes: message length (LE, includes protocol byte + type byte + payload)]
+  // [1 byte: protocol marker (0xE3 = eDonkey)]
   // [1 byte: message type]
   // [N bytes: payload]
-  uint32_t msgLen = static_cast<uint32_t>(payloadLen + 1);
-  unsigned char header[5];
+  uint32_t msgLen = static_cast<uint32_t>(payloadLen + 2);
+  unsigned char header[6];
   header[0] = static_cast<unsigned char>(msgLen);
   header[1] = static_cast<unsigned char>(msgLen >> 8);
   header[2] = static_cast<unsigned char>(msgLen >> 16);
   header[3] = static_cast<unsigned char>(msgLen >> 24);
-  header[4] = msgType;
+  header[4] = 0xE3;  // eDonkey protocol marker
+  header[5] = msgType;
 
-  sendBuffer_.insert(sendBuffer_.end(), header, header + 5);
+  sendBuffer_.insert(sendBuffer_.end(), header, header + 6);
   if (payloadLen > 0 && payload) {
     sendBuffer_.insert(sendBuffer_.end(), payload, payload + payloadLen);
   }
@@ -251,11 +330,10 @@ bool Ed2kDownloadCommand::flushSendBuffer()
     size_t toWrite = sendBuffer_.size() - totalWritten;
     ssize_t written = 0;
     try {
-      written = socket_->writeData(sendBuffer_.data() + totalWritten,
-                                   toWrite);
+      written = getSocket()->writeData(sendBuffer_.data() + totalWritten,
+                                        toWrite);
     }
-    catch (RecoverableException& e) {
-      // On error, shift remaining data to front and wait for writability.
+    catch (RecoverableException&) {
       if (totalWritten > 0) {
         sendBuffer_.erase(sendBuffer_.begin(),
                           sendBuffer_.begin() + totalWritten);
@@ -263,7 +341,7 @@ bool Ed2kDownloadCommand::flushSendBuffer()
       return false;
     }
     if (written == 0) {
-      // EAGAIN — socket buffer full or still connecting, wait for writability.
+      // EAGAIN — socket buffer full, wait for writability.
       if (totalWritten > 0) {
         sendBuffer_.erase(sendBuffer_.begin(),
                           sendBuffer_.begin() + totalWritten);
@@ -271,27 +349,32 @@ bool Ed2kDownloadCommand::flushSendBuffer()
       return false;
     }
     totalWritten += static_cast<size_t>(written);
+    // Reset inactivity timer on successful write
+    getCheckPoint().reset();
   }
 
   sendBuffer_.clear();
   return true;
 }
 
-bool Ed2kDownloadCommand::tryReceiveMessage(unsigned char& msgType,
-                                            std::vector<unsigned char>& payload)
+bool Ed2kDownloadCommand::tryReceiveMessage(
+    unsigned char& msgType, std::vector<unsigned char>& payload)
 {
   // Read whatever is available into recvBuffer_.
-  // readData() sets len=0 on EAGAIN (no exception); real socket errors
-  // throw DlRetryEx which propagates to execute()'s catch for proper retry.
   unsigned char tmp[8192];
   size_t readLen = sizeof(tmp);
-  socket_->readData(tmp, readLen);
+  getSocket()->readData(tmp, readLen);
 
   if (readLen > 0) {
     recvBuffer_.insert(recvBuffer_.end(), tmp, tmp + readLen);
+    // Reset inactivity timer on received data
+    getCheckPoint().reset();
+  }
+  else if (readLen == 0 && !getSocket()->wantRead()) {
+    // readData returned 0 and wantRead is false → connection closed (EOF)
+    throw DL_RETRY_EX("ED2K connection closed by remote peer");
   }
 
-  // Try to extract a complete message from recvBuffer_.
   // Need at least 4 bytes for the length prefix.
   if (recvBuffer_.size() < ED2K_HEADER_LEN) {
     return false;
@@ -306,105 +389,76 @@ bool Ed2kDownloadCommand::tryReceiveMessage(unsigned char& msgType,
     throw DL_ABORT_EX2(fmt("ED2K message too large: %u bytes", msgLen),
                        error_code::UNKNOWN_ERROR);
   }
-  if (msgLen < 1) {
+  // msgLen includes protocol byte + opcode byte, so minimum is 2
+  if (msgLen < 2) {
     throw DL_ABORT_EX2("ED2K message too short",
                        error_code::UNKNOWN_ERROR);
   }
 
-  // Total bytes needed: 4 (header) + msgLen (type + payload)
   size_t totalNeeded = ED2K_HEADER_LEN + msgLen;
   if (recvBuffer_.size() < totalNeeded) {
-    return false; // Not enough data yet.
+    return false;
   }
 
-  // Extract message type and payload.
-  msgType = recvBuffer_[ED2K_HEADER_LEN];
-  size_t payloadLen = msgLen - 1;
+  // Skip protocol byte at recvBuffer_[ED2K_HEADER_LEN] (0xE3 or 0xC5)
+  // unsigned char protocol = recvBuffer_[ED2K_HEADER_LEN];
+  msgType = recvBuffer_[ED2K_HEADER_LEN + 1];
+  size_t payloadLen = msgLen - 2;  // subtract protocol byte + opcode byte
   if (payloadLen > 0) {
-    payload.assign(recvBuffer_.data() + ED2K_HEADER_LEN + 1,
-                   recvBuffer_.data() + ED2K_HEADER_LEN + 1 + payloadLen);
+    payload.assign(recvBuffer_.data() + ED2K_HEADER_LEN + 2,
+                   recvBuffer_.data() + ED2K_HEADER_LEN + 2 + payloadLen);
   }
   else {
     payload.clear();
   }
 
-  // Consume the message from the buffer.
   recvBuffer_.erase(recvBuffer_.begin(),
                     recvBuffer_.begin() + totalNeeded);
-
   return true;
 }
 
-bool Ed2kDownloadCommand::handshake()
-{
-  A2_LOG_DEBUG(fmt("CUID#%" PRId64 " - ED2K handshake: sending login request",
-                   getCuid()));
+// ============================================================================
+// Server phase
+// ============================================================================
 
-  // Queue the login request only once. On re-entry (after EAGAIN), the
-  // send buffer is flushed by execute() before we get here, and we skip
-  // re-queueing to avoid sending a duplicate login request.
-  if (!handshakeSent_) {
-    unsigned char loginPayload[16];
-    std::memset(loginPayload, 0, sizeof(loginPayload));
-    // Protocol version hash (MD4 of "eDonkey" for compatibility)
-    const unsigned char protocolHash[] = {
-      0x5F, 0x1E, 0x51, 0x3B, 0x9C, 0xFE, 0xE7, 0x3A,
-      0x2E, 0x9B, 0xEC, 0x17, 0x63, 0xA1, 0xAE, 0xE0
+bool Ed2kDownloadCommand::serverLogin()
+{
+  // Send OP_LOGINREQUEST (once)
+  if (!loginSent_) {
+    // Build login payload:
+    //   [16 bytes] user_hash (random)
+    //   [4 bytes]  user_id (0 = new connection)
+    //   [2 bytes]  tcp_port (4662)
+    //   [4 bytes]  client_version (0x3C = 60)
+    //   [N+1]      username (null-terminated)
+    //   [N+1]      password (null-terminated, empty for free servers)
+    std::vector<unsigned char> payload;
+    // User hash: fixed random-looking bytes (servers don't validate this)
+    const unsigned char userHash[16] = {
+      0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF,
+      0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54, 0x32, 0x10
     };
-    std::memcpy(loginPayload, protocolHash, 16);
+    payload.insert(payload.end(), userHash, userHash + 16);
+    // User ID = 0
+    payload.push_back(0); payload.push_back(0);
+    payload.push_back(0); payload.push_back(0);
+    // TCP port = 4662 (LE)
+    payload.push_back(0x36); payload.push_back(0x12);
+    // Client version = 0x3C (60)
+    payload.push_back(0x3C); payload.push_back(0);
+    payload.push_back(0); payload.push_back(0);
+    // Username = "XferCore\0"
+    const char* username = "XferCore";
+    payload.insert(payload.end(), username, username + 8);
+    payload.push_back(0);
+    // Password = "\0" (empty)
+    payload.push_back(0);
 
-    queueMessage(ed2kmsg::LOGIN_REQUEST, loginPayload, 16);
-    handshakeSent_ = true;
+    queueMessage(ed2kmsg::LOGIN_REQUEST, payload.data(), payload.size());
+    loginSent_ = true;
 
-    // Flush immediately so we can proceed if the socket is writable now.
-    if (!flushSendBuffer()) {
-      setWriteCheckSocket(getSocket());
-      return false;
-    }
-  }
-
-  // Receive login response
-  unsigned char msgType;
-  std::vector<unsigned char> payload;
-  if (!tryReceiveMessage(msgType, payload)) {
-    A2_LOG_DEBUG(fmt("CUID#%" PRId64
-                     " - ED2K handshake: waiting for login response",
-                     getCuid()));
-    return false;
-  }
-
-  if (msgType == ed2kmsg::LOGIN_REJECT) {
-    throw DL_ABORT_EX2("ED2K login rejected by server",
-                       error_code::UNKNOWN_ERROR);
-  }
-
-  if (msgType != ed2kmsg::LOGIN_ACCEPT) {
-    throw DL_ABORT_EX2(
-        fmt("Unexpected ED2K message type in handshake: 0x%02x", msgType),
-        error_code::UNKNOWN_ERROR);
-  }
-
-  A2_LOG_INFO(fmt("CUID#%" PRId64 " - ED2K handshake completed successfully",
-                  getCuid()));
-  return true;
-}
-
-bool Ed2kDownloadCommand::requestFileInfo()
-{
-  A2_LOG_DEBUG(fmt("CUID#%" PRId64 " - ED2K requesting file info for hash=%s",
-                   getCuid(), fileHash_.c_str()));
-
-  // Convert hex hash to raw bytes
-  std::vector<unsigned char> rawHash = Ed2kHelper::hexToHash(fileHash_);
-  if (rawHash.size() != 16) {
-    throw DL_ABORT_EX2("Invalid ED2K file hash",
-                       error_code::UNKNOWN_ERROR);
-  }
-
-  // Queue the file request only once.
-  if (!fileRequestSent_) {
-    queueMessage(ed2kmsg::FILE_REQUEST, rawHash.data(), 16);
-    fileRequestSent_ = true;
+    A2_LOG_INFO(fmt("CUID#%" PRId64 " - ED2K sending login request",
+                    getCuid()));
 
     if (!flushSendBuffer()) {
       setWriteCheckSocket(getSocket());
@@ -412,257 +466,556 @@ bool Ed2kDownloadCommand::requestFileInfo()
     }
   }
 
-  // Receive file answer
+  // Receive OP_IDCHANGE (server's login response)
   unsigned char msgType;
   std::vector<unsigned char> payload;
   if (!tryReceiveMessage(msgType, payload)) {
-    A2_LOG_DEBUG(fmt("CUID#%" PRId64 " - ED2K waiting for file answer",
-                     getCuid()));
     return false;
   }
 
-  if (msgType != ed2kmsg::FILE_ANSWER) {
+  // Skip server messages (banner, MOTD, etc.)
+  while (msgType == ed2kmsg::SERVER_MESSAGE) {
+    A2_LOG_INFO(fmt("CUID#%" PRId64 " - ED2K server message: %s",
+                    getCuid(),
+                    payload.size() > 0 ?
+                      std::string(payload.begin(), payload.end()).c_str() :
+                      "(empty)"));
+    if (!tryReceiveMessage(msgType, payload)) {
+      return false;
+    }
+  }
+
+  if (msgType != ed2kmsg::ID_CHANGE) {
     throw DL_ABORT_EX2(
-        fmt("Unexpected ED2K message type for file info: 0x%02x, expected "
-            "0x19",
-            msgType),
+        fmt("ED2K login failed: unexpected message type 0x%02x"
+            " (expected 0x02 ID_CHANGE)", msgType),
         error_code::UNKNOWN_ERROR);
   }
 
-  // Parse file answer: file size (8 bytes LE) + filename (null-terminated)
-  if (payload.size() < 8) {
-    throw DL_ABORT_EX2("ED2K file answer too short",
-                       error_code::UNKNOWN_ERROR);
+  // Parse ID_CHANGE: [4 bytes user_id][optional 4 bytes tcp_flags]
+  if (payload.size() >= 4) {
+    uint32_t userId = static_cast<uint32_t>(payload[0]) |
+                      (static_cast<uint32_t>(payload[1]) << 8) |
+                      (static_cast<uint32_t>(payload[2]) << 16) |
+                      (static_cast<uint32_t>(payload[3]) << 24);
+    bool highId = userId >= 0x01000000;
+    A2_LOG_INFO(fmt("CUID#%" PRId64 " - ED2K login accepted, user_id=%u (%s)",
+                    getCuid(), userId, highId ? "HighID" : "LowID"));
   }
-
-  uint64_t fileSize = static_cast<uint64_t>(payload[0]) |
-                      (static_cast<uint64_t>(payload[1]) << 8) |
-                      (static_cast<uint64_t>(payload[2]) << 16) |
-                      (static_cast<uint64_t>(payload[3]) << 24) |
-                      (static_cast<uint64_t>(payload[4]) << 32) |
-                      (static_cast<uint64_t>(payload[5]) << 40) |
-                      (static_cast<uint64_t>(payload[6]) << 48) |
-                      (static_cast<uint64_t>(payload[7]) << 56);
-
-  // If file size was not set externally, use the one from the server
-  if (fileSize_ == 0) {
-    fileSize_ = fileSize;
-  }
-
-  if (fileSize_ > 0) {
-    totalChunks_ = static_cast<int>((fileSize_ + ED2K_CHUNK_SIZE - 1) /
-                                    ED2K_CHUNK_SIZE);
-  }
-
-  A2_LOG_INFO(fmt("CUID#%" PRId64
-                  " - ED2K file info received: size=%" PRId64
-                  " chunks=%d",
-                  getCuid(), static_cast<int64_t>(fileSize_), totalChunks_));
 
   return true;
 }
 
-bool Ed2kDownloadCommand::receiveData()
+bool Ed2kDownloadCommand::serverGetSources()
 {
-  while (currentChunk_ < totalChunks_) {
-    A2_LOG_DEBUG(fmt("CUID#%" PRId64 " - ED2K downloading chunk %d/%d "
-                     "offset=%" PRId64,
-                     getCuid(), currentChunk_ + 1, totalChunks_,
-                     static_cast<int64_t>(currentChunk_) * ED2K_CHUNK_SIZE));
-
-    // Calculate chunk size (last chunk may be smaller)
-    int64_t chunkSize = ED2K_CHUNK_SIZE;
-    if (static_cast<int64_t>(currentChunk_ + 1) * ED2K_CHUNK_SIZE >
-        static_cast<int64_t>(fileSize_)) {
-      chunkSize = static_cast<int64_t>(fileSize_) -
-                  static_cast<int64_t>(currentChunk_) * ED2K_CHUNK_SIZE;
+  // Send OP_GETFILESOURCES (once)
+  if (!sourcesRequested_) {
+    std::vector<unsigned char> rawHash =
+        Ed2kHelper::hexToHash(fileHash_);
+    if (rawHash.size() != 16) {
+      throw DL_ABORT_EX2("Invalid ED2K file hash for source request",
+                         error_code::UNKNOWN_ERROR);
     }
 
-    switch (downloadSubState_) {
-    case DownloadSubState::REQUEST_UPLOAD: {
-      // Queue START_UPLOAD_REQ for this chunk (once per chunk).
-      unsigned char startPayload[4];
-      uint32_t chunkIdx = static_cast<uint32_t>(currentChunk_);
-      startPayload[0] = static_cast<unsigned char>(chunkIdx);
-      startPayload[1] = static_cast<unsigned char>(chunkIdx >> 8);
-      startPayload[2] = static_cast<unsigned char>(chunkIdx >> 16);
-      startPayload[3] = static_cast<unsigned char>(chunkIdx >> 24);
+    queueMessage(ed2kmsg::GET_FILE_SOURCES, rawHash.data(), 16);
+    sourcesRequested_ = true;
 
-      queueMessage(ed2kmsg::START_UPLOAD_REQ, startPayload, 4);
+    A2_LOG_INFO(fmt("CUID#%" PRId64 " - ED2K requesting sources for hash=%s",
+                    getCuid(), fileHash_.c_str()));
+
+    if (!flushSendBuffer()) {
+      setWriteCheckSocket(getSocket());
+      return false;
+    }
+  }
+
+  // Receive OP_FOUNDSOURCES
+  unsigned char msgType;
+  std::vector<unsigned char> payload;
+  if (!tryReceiveMessage(msgType, payload)) {
+    return false;
+  }
+
+  // Skip server messages
+  while (msgType == ed2kmsg::SERVER_MESSAGE) {
+    if (!tryReceiveMessage(msgType, payload)) {
+      return false;
+    }
+  }
+
+  if (msgType != ed2kmsg::FOUND_SOURCES) {
+    throw DL_ABORT_EX2(
+        fmt("ED2K source discovery failed: unexpected message type 0x%02x"
+            " (expected 0x42 FOUND_SOURCES)", msgType),
+        error_code::UNKNOWN_ERROR);
+  }
+
+  // Parse FOUND_SOURCES:
+  //   [16 bytes] file_hash
+  //   [1 byte]   source_count
+  //   For each source: [4 bytes IP (LE)][2 bytes port (LE)]
+  if (payload.size() < 17) {
+    A2_LOG_WARN(fmt("CUID#%" PRId64 " - ED2K no sources found",
+                    getCuid()));
+    // No sources available — fail
+    throw DL_ABORT_EX2("No ED2K sources found for this file",
+                       error_code::UNKNOWN_ERROR);
+  }
+
+  uint8_t sourceCount = payload[16];
+  A2_LOG_INFO(fmt("CUID#%" PRId64 " - ED2K found %u sources",
+                  getCuid(), sourceCount));
+
+  size_t expectedSize = 17 + static_cast<size_t>(sourceCount) * 6;
+  if (payload.size() < expectedSize) {
+    A2_LOG_WARN(fmt("CUID#%" PRId64 " - ED2K source list truncated"
+                    " (expected %zu, got %zu)",
+                    getCuid(), expectedSize, payload.size()));
+    sourceCount = static_cast<uint8_t>(
+        (payload.size() - 17) / 6);
+  }
+
+  for (size_t i = 0; i < sourceCount; ++i) {
+    size_t off = 17 + i * 6;
+    // IP is 4 bytes LE — first byte is first octet
+    char ipStr[16];
+    snprintf(ipStr, sizeof(ipStr), "%u.%u.%u.%u",
+             payload[off], payload[off + 1],
+             payload[off + 2], payload[off + 3]);
+    // Port is 2 bytes LE
+    uint16_t port = static_cast<uint16_t>(payload[off + 4]) |
+                    (static_cast<uint16_t>(payload[off + 5]) << 8);
+
+    // Skip LowID sources (can't connect directly)
+    uint32_t ip = static_cast<uint32_t>(payload[off]) |
+                  (static_cast<uint32_t>(payload[off + 1]) << 8) |
+                  (static_cast<uint32_t>(payload[off + 2]) << 16) |
+                  (static_cast<uint32_t>(payload[off + 3]) << 24);
+    if (ip < 0x01000000) {
+      A2_LOG_DEBUG(fmt("CUID#%" PRId64 " - Skipping LowID source %s:%u",
+                       getCuid(), ipStr, port));
+      continue;
+    }
+
+    PeerSource src;
+    src.addr = ipStr;
+    src.port = port;
+    sources_.push_back(src);
+
+    A2_LOG_INFO(fmt("CUID#%" PRId64 " - ED2K source %zu: %s:%u",
+                    getCuid(), sources_.size(), ipStr, port));
+  }
+
+  if (sources_.empty()) {
+    throw DL_ABORT_EX2("No connectable ED2K sources (all are LowID)",
+                       error_code::UNKNOWN_ERROR);
+  }
+
+  // We're done with the server — close the server socket.
+  // The peer phase will create its own socket.
+  try {
+    getSocket()->closeConnection();
+  }
+  catch (...) {}
+
+  return true;
+}
+
+// ============================================================================
+// Peer phase
+// ============================================================================
+
+void Ed2kDownloadCommand::tryNextPeer()
+{
+  currentSourceIndex_++;
+  if (currentSourceIndex_ >= sources_.size()) {
+    A2_LOG_ERROR(fmt("CUID#%" PRId64 " - ED2K exhausted all peer sources",
+                     getCuid()));
+    state_ = Ed2kState::FAILURE;
+    return;
+  }
+
+  A2_LOG_INFO(fmt("CUID#%" PRId64 " - ED2K trying next peer source %zu/%zu",
+                  getCuid(), currentSourceIndex_ + 1, sources_.size()));
+  state_ = Ed2kState::PEER_CONNECT;
+}
+
+bool Ed2kDownloadCommand::peerConnect()
+{
+  if (currentSourceIndex_ >= sources_.size()) {
+    state_ = Ed2kState::FAILURE;
+    return false;
+  }
+
+  const PeerSource& src = sources_[currentSourceIndex_];
+
+  A2_LOG_INFO(fmt("CUID#%" PRId64 " - ED2K connecting to peer %s:%u",
+                  getCuid(), src.addr.c_str(), src.port));
+
+  // Close old socket and clear all protocol state for the new peer.
+  // This is critical: without clearing, stale data from the server phase
+  // or a previous peer attempt would corrupt the new connection's protocol.
+  disableReadCheckSocket();
+  disableWriteCheckSocket();
+  try {
+    auto& oldSocket = getSocket();
+    if (oldSocket && oldSocket->isOpen()) {
+      oldSocket->closeConnection();
+    }
+  }
+  catch (...) {}
+
+  // Create a fresh socket for the peer connection
+  createSocket();
+
+  // Clear protocol buffers — new connection, new protocol context
+  sendBuffer_.clear();
+  recvBuffer_.clear();
+
+  // Reset peer-phase flags so hello/upload/parts are re-sent
+  helloSent_ = false;
+  uploadReqSent_ = false;
+  partsRequested_ = false;
+  downloadSubState_ = DownloadSubState::REQUEST_PARTS;
+
+  // Reset inactivity timer
+  getCheckPoint().reset();
+
+  try {
+    getSocket()->establishConnection(src.addr, src.port);
+  }
+  catch (RecoverableException& e) {
+    A2_LOG_WARN(fmt("CUID#%" PRId64 " - ED2K failed to connect to peer %s:%u: %s",
+                    getCuid(), src.addr.c_str(), src.port, e.what()));
+    tryNextPeer();
+    return false;
+  }
+
+  // Connection initiated — transition to handshake state.
+  // peerHandshake() will try to write (send OP_HELLO). If the connection
+  // isn't established yet, writeData returns 0 (EAGAIN) and we wait
+  // for writability. When connected, the socket becomes writable and
+  // execute() is called again at PEER_HANDSHAKE state.
+  state_ = Ed2kState::PEER_HANDSHAKE;
+  setWriteCheckSocket(getSocket());
+  return false;
+}
+
+bool Ed2kDownloadCommand::peerHandshake()
+{
+  try {
+    // Send OP_HELLO (once)
+    if (!helloSent_) {
+      // Build OP_HELLO payload:
+      //   [16 bytes] user_hash
+      //   [4 bytes]  user_id (0)
+      //   [2 bytes]  tcp_port (4662)
+      //   [4 bytes]  server_ip (LE)
+      //   [2 bytes]  server_port (LE)
+      //   [N+1]      username (null-terminated)
+      std::vector<unsigned char> payload;
+      const unsigned char userHash[16] = {
+        0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF,
+        0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54, 0x32, 0x10
+      };
+      payload.insert(payload.end(), userHash, userHash + 16);
+      // User ID = 0
+      payload.push_back(0); payload.push_back(0);
+      payload.push_back(0); payload.push_back(0);
+      // TCP port = 4662
+      payload.push_back(0x36); payload.push_back(0x12);
+      // Server IP (convert string to LE uint32)
+      uint32_t serverIp = 0;
+      if (!serverAddr_.empty()) {
+        serverIp = ntohl(inet_addr(serverAddr_.c_str()));
+      }
+      payload.push_back(static_cast<unsigned char>(serverIp));
+      payload.push_back(static_cast<unsigned char>(serverIp >> 8));
+      payload.push_back(static_cast<unsigned char>(serverIp >> 16));
+      payload.push_back(static_cast<unsigned char>(serverIp >> 24));
+      // Server port
+      payload.push_back(static_cast<unsigned char>(serverPort_));
+      payload.push_back(static_cast<unsigned char>(serverPort_ >> 8));
+      // Username
+      const char* username = "XferCore";
+      payload.insert(payload.end(), username, username + 8);
+      payload.push_back(0);
+
+      queueMessage(ed2kmsg::HELLO, payload.data(), payload.size());
+      helloSent_ = true;
+
+      A2_LOG_DEBUG(fmt("CUID#%" PRId64 " - ED2K sending peer hello",
+                       getCuid()));
+
       if (!flushSendBuffer()) {
         setWriteCheckSocket(getSocket());
         return false;
       }
-      downloadSubState_ = DownloadSubState::WAIT_ACCEPT_UPLOAD;
-      // Fall through to try receiving immediately.
     }
-    case DownloadSubState::WAIT_ACCEPT_UPLOAD: {
-      unsigned char msgType;
-      std::vector<unsigned char> payload;
-      // Consume messages until we see ACCEPT_UPLOAD_REQ, skipping
-      // intermediate slot-control messages.
-      while (true) {
-        if (!tryReceiveMessage(msgType, payload)) {
-          A2_LOG_DEBUG(fmt("CUID#%" PRId64
-                           " - ED2K waiting for accept upload",
-                           getCuid()));
+
+    // Receive OP_HELLOANSWER
+    unsigned char msgType;
+    std::vector<unsigned char> payload;
+    if (!tryReceiveMessage(msgType, payload)) {
+      return false;
+    }
+
+    // Skip queue ranking notifications (not relevant during handshake)
+    while (msgType == ed2kmsg::QUEUE_POSITION) {
+      if (!tryReceiveMessage(msgType, payload)) {
+        return false;
+      }
+    }
+
+    if (msgType != ed2kmsg::HELLO_ANSWER) {
+      A2_LOG_WARN(fmt("CUID#%" PRId64 " - ED2K peer handshake: unexpected"
+                      " message 0x%02x, trying next peer",
+                      getCuid(), msgType));
+      tryNextPeer();
+      return false;
+    }
+
+    A2_LOG_INFO(fmt("CUID#%" PRId64 " - ED2K peer handshake completed",
+                    getCuid()));
+    return true;
+  }
+  catch (RecoverableException& e) {
+    A2_LOG_WARN(fmt("CUID#%" PRId64 " - ED2K peer handshake error: %s,"
+                    " trying next peer", getCuid(), e.what()));
+    tryNextPeer();
+    return false;
+  }
+}
+
+bool Ed2kDownloadCommand::peerStartUpload()
+{
+  try {
+    // Send OP_START_UPLOAD_REQ (once)
+    // Payload: [16 bytes file_hash]
+    if (!uploadReqSent_) {
+      std::vector<unsigned char> rawHash =
+          Ed2kHelper::hexToHash(fileHash_);
+      if (rawHash.size() != 16) {
+        throw DL_ABORT_EX2("Invalid ED2K file hash for upload request",
+                           error_code::UNKNOWN_ERROR);
+      }
+
+      queueMessage(ed2kmsg::START_UPLOAD_REQ, rawHash.data(), 16);
+      uploadReqSent_ = true;
+
+      A2_LOG_INFO(fmt("CUID#%" PRId64 " - ED2K requesting upload slot",
+                      getCuid()));
+
+      if (!flushSendBuffer()) {
+        setWriteCheckSocket(getSocket());
+        return false;
+      }
+    }
+
+    // Receive OP_ACCEPT_UPLOAD_REQ
+    // The peer may send OP_QUEUE_POSITION (we're queued) before accepting.
+    unsigned char msgType;
+    std::vector<unsigned char> payload;
+    while (true) {
+      if (!tryReceiveMessage(msgType, payload)) {
+        return false;
+      }
+
+      if (msgType == ed2kmsg::ACCEPT_UPLOAD_REQ) {
+        A2_LOG_INFO(fmt("CUID#%" PRId64 " - ED2K upload slot accepted",
+                        getCuid()));
+        return true;
+      }
+
+      if (msgType == ed2kmsg::QUEUE_POSITION) {
+        A2_LOG_DEBUG(fmt("CUID#%" PRId64 " - ED2K queued for upload slot",
+                         getCuid()));
+        continue;
+      }
+
+      if (msgType == ed2kmsg::END_UPLOAD_REQ) {
+        A2_LOG_WARN(fmt("CUID#%" PRId64 " - ED2K peer refused upload,"
+                        " trying next peer", getCuid()));
+        tryNextPeer();
+        return false;
+      }
+
+      A2_LOG_DEBUG(fmt("CUID#%" PRId64 " - ED2K skipping message 0x%02x"
+                       " during upload request",
+                       getCuid(), msgType));
+    }
+  }
+  catch (RecoverableException& e) {
+    A2_LOG_WARN(fmt("CUID#%" PRId64 " - ED2K upload request error: %s,"
+                    " trying next peer", getCuid(), e.what()));
+    tryNextPeer();
+    return false;
+  }
+}
+
+bool Ed2kDownloadCommand::peerDownload()
+{
+  try {
+    while (downloadOffset_ < static_cast<int64_t>(fileSize_)) {
+      switch (downloadSubState_) {
+      case DownloadSubState::REQUEST_PARTS: {
+        // Calculate block range: [downloadOffset_, end]
+        requestStart_ = downloadOffset_;
+        requestEnd_ = downloadOffset_ + ED2K_BLOCK_SIZE;
+        if (requestEnd_ > static_cast<int64_t>(fileSize_)) {
+          requestEnd_ = static_cast<int64_t>(fileSize_);
+        }
+        // Don't cross part boundary (ED2K_PART_SIZE)
+        int64_t partBoundary =
+            (downloadOffset_ / ED2K_PART_SIZE + 1) * ED2K_PART_SIZE;
+        if (requestEnd_ > partBoundary) {
+          requestEnd_ = partBoundary;
+        }
+
+        // Build OP_REQUEST_PARTS payload:
+        //   [16 bytes] file_hash
+        //   [3 x 4 bytes] start offsets (we request 1 block, others = 0)
+        //   [3 x 4 bytes] end offsets (we request 1 block, others = 0)
+        std::vector<unsigned char> rawHash =
+            Ed2kHelper::hexToHash(fileHash_);
+        if (rawHash.size() != 16) {
+          throw DL_ABORT_EX2("Invalid ED2K file hash for parts request",
+                             error_code::UNKNOWN_ERROR);
+        }
+
+        std::vector<unsigned char> payload;
+        payload.insert(payload.end(), rawHash.begin(), rawHash.end());
+
+        auto appendLe32 = [&payload](uint32_t v) {
+          payload.push_back(static_cast<unsigned char>(v));
+          payload.push_back(static_cast<unsigned char>(v >> 8));
+          payload.push_back(static_cast<unsigned char>(v >> 16));
+          payload.push_back(static_cast<unsigned char>(v >> 24));
+        };
+        appendLe32(static_cast<uint32_t>(requestStart_));
+        appendLe32(0);
+        appendLe32(0);
+        appendLe32(static_cast<uint32_t>(requestEnd_));
+        appendLe32(0);
+        appendLe32(0);
+
+        queueMessage(ed2kmsg::REQUEST_PARTS, payload.data(), payload.size());
+        partsRequested_ = true;
+
+        A2_LOG_DEBUG(fmt("CUID#%" PRId64 " - ED2K requesting block [%lld, %lld)",
+                         getCuid(),
+                         static_cast<long long>(requestStart_),
+                         static_cast<long long>(requestEnd_)));
+
+        if (!flushSendBuffer()) {
+          setWriteCheckSocket(getSocket());
           return false;
         }
-        if (msgType == ed2kmsg::CHANGE_SLOT ||
-            msgType == ed2kmsg::CALLBACK_REQ) {
-          continue;
-        }
-        break;
+
+        downloadSubState_ = DownloadSubState::RECEIVING_DATA;
+        // Fall through to try receiving immediately.
       }
 
-      if (msgType != ed2kmsg::ACCEPT_UPLOAD_REQ) {
-        throw DL_ABORT_EX2(
-            fmt("ED2K unexpected message type: 0x%02x, expected 0x41",
-                msgType),
-            error_code::UNKNOWN_ERROR);
-      }
+      case DownloadSubState::RECEIVING_DATA: {
+        unsigned char msgType;
+        std::vector<unsigned char> payload;
 
-      // Prepare accumulator for the new chunk.
-      currentChunkData_.clear();
-      currentChunkData_.reserve(static_cast<size_t>(chunkSize));
-      downloadSubState_ = DownloadSubState::RECEIVING_DATA;
-      // Fall through to start receiving data.
-    }
-    case DownloadSubState::RECEIVING_DATA: {
-      int64_t bytesReceived =
-          static_cast<int64_t>(currentChunkData_.size());
-      unsigned char msgType;
-      std::vector<unsigned char> payload;
-      while (bytesReceived < chunkSize) {
         if (!tryReceiveMessage(msgType, payload)) {
-          A2_LOG_DEBUG(
-              fmt("CUID#%" PRId64 " - ED2K waiting for chunk data", getCuid()));
           return false;
         }
 
         if (msgType == ed2kmsg::SENDING_PART) {
-          currentChunkData_.insert(currentChunkData_.end(),
-                                   payload.begin(), payload.end());
-          bytesReceived += static_cast<int64_t>(payload.size());
-          downloadedLength_ += static_cast<int64_t>(payload.size());
-        }
-        else if (msgType == ed2kmsg::END_OF_FILE) {
-          A2_LOG_DEBUG(fmt("CUID#%" PRId64
-                           " - ED2K end of file for chunk %d",
-                           getCuid(), currentChunk_));
+          // Parse SENDING_PART:
+          //   [16 bytes] file_hash
+          //   [4 bytes]  start_offset (LE)
+          //   [4 bytes]  end_offset (LE)
+          //   [data...]  file data (end_offset - start_offset bytes)
+          if (payload.size() < 24) {
+            throw DL_ABORT_EX2(
+                fmt("ED2K SENDING_PART too short: %zu bytes",
+                    payload.size()),
+                error_code::UNKNOWN_ERROR);
+          }
+
+          uint32_t dataStart = static_cast<uint32_t>(payload[16]) |
+                               (static_cast<uint32_t>(payload[17]) << 8) |
+                               (static_cast<uint32_t>(payload[18]) << 16) |
+                               (static_cast<uint32_t>(payload[19]) << 24);
+          uint32_t dataEnd = static_cast<uint32_t>(payload[20]) |
+                             (static_cast<uint32_t>(payload[21]) << 8) |
+                             (static_cast<uint32_t>(payload[22]) << 16) |
+                             (static_cast<uint32_t>(payload[23]) << 24);
+
+          size_t expectedDataLen = dataEnd - dataStart;
+          if (payload.size() < 24 + expectedDataLen) {
+            throw DL_ABORT_EX2(
+                "ED2K SENDING_PART data length mismatch",
+                error_code::UNKNOWN_ERROR);
+          }
+
+          const unsigned char* fileData = payload.data() + 24;
+
+          A2_LOG_DEBUG(fmt("CUID#%" PRId64 " - ED2K received block [%u, %u)"
+                           " %zu bytes",
+                           getCuid(), dataStart, dataEnd, expectedDataLen));
+
+          if (!writeBlockToDisk(static_cast<int64_t>(dataStart),
+                                fileData, expectedDataLen)) {
+            throw DL_ABORT_EX2("ED2K failed to write block to disk",
+                               error_code::FILE_IO_ERROR);
+          }
+
+          downloadedLength_ += static_cast<int64_t>(expectedDataLen);
+          downloadOffset_ = static_cast<int64_t>(dataEnd);
+
+          updateProgress();
+
+          downloadSubState_ = DownloadSubState::REQUEST_PARTS;
           break;
         }
-        else if (msgType == ed2kmsg::CHANGE_SLOT ||
-                 msgType == ed2kmsg::CALLBACK_REQ) {
-          continue;
+
+        if (msgType == ed2kmsg::END_UPLOAD_REQ) {
+          A2_LOG_INFO(fmt("CUID#%" PRId64 " - ED2K peer ended upload,"
+                          " trying next peer", getCuid()));
+          tryNextPeer();
+          return false;
         }
-        else {
-          throw DL_ABORT_EX2(
-              fmt("ED2K unexpected message during data receive: 0x%02x",
-                  msgType),
-              error_code::UNKNOWN_ERROR);
-        }
+
+        A2_LOG_DEBUG(fmt("CUID#%" PRId64 " - ED2K skipping message 0x%02x"
+                         " during download",
+                         getCuid(), msgType));
+        break;
       }
-      downloadSubState_ = DownloadSubState::CHUNK_COMPLETE;
-      // Fall through to finalize the chunk.
+      } // switch (downloadSubState_)
+    } // while (downloadOffset_ < fileSize_)
+
+    // All data downloaded — mark as complete
+    try {
+      auto ps = getRequestGroup()->getPieceStorage();
+      if (ps) {
+        ps->markAllPiecesDone();
+      }
     }
-    case DownloadSubState::CHUNK_COMPLETE: {
-      // Verify MD4 hash of the chunk
-      if (!verifyChunkMd4(currentChunk_, currentChunkData_.data(),
-                          currentChunkData_.size())) {
-        throw DL_RETRY_EX(
-            fmt("ED2K chunk %d MD4 hash mismatch, will retry", currentChunk_));
-      }
-
-      // Write chunk data to disk
-      if (!writeChunkToDisk(currentChunk_, currentChunkData_.data(),
-                            currentChunkData_.size())) {
-        throw DL_ABORT_EX2("ED2K failed to write chunk to disk",
-                           error_code::FILE_IO_ERROR);
-      }
-
-      // Update PieceStorage so the engine reports progress correctly.
-      // markPiecesDone() sets the bitfield for all pieces up to
-      // downloadedLength_, which matches ED2K's sequential download order.
-      try {
-        auto ps = getRequestGroup()->getPieceStorage();
-        if (ps) {
-          ps->markPiecesDone(downloadedLength_);
-        }
-      }
-      catch (RecoverableException& e) {
-        A2_LOG_DEBUG(fmt("CUID#%" PRId64
-                         " - ED2K: failed to update piece progress: %s",
-                         getCuid(), e.what()));
-      }
-
-      A2_LOG_INFO(fmt("CUID#%" PRId64 " - ED2K chunk %d/%d completed "
-                       "(%" PRId64 " bytes, total %" PRId64 ")",
-                       getCuid(), currentChunk_ + 1, totalChunks_,
-                       static_cast<int64_t>(currentChunkData_.size()),
-                       downloadedLength_));
-
-      // Advance chunk state BEFORE queueing the non-critical STOP_UPLOAD_REQ,
-      // so that if the flush blocks, re-entry resumes at the next chunk
-      // instead of re-finalizing this one.
-      currentChunk_++;
-      currentChunkData_.clear();
-      downloadSubState_ = DownloadSubState::REQUEST_UPLOAD;
-
-      // Queue stop upload for this chunk (non-critical). If this can't be
-      // flushed immediately, execute()'s top-level flush will handle it
-      // on the next call.
-      unsigned char stopPayload[4] = {};
-      queueMessage(ed2kmsg::STOP_UPLOAD_REQ, stopPayload, 4);
-      if (!flushSendBuffer()) {
-        setWriteCheckSocket(getSocket());
-        return false;
-      }
-      break;
+    catch (RecoverableException& e) {
+      A2_LOG_DEBUG(fmt("CUID#%" PRId64 " - ED2K: markAllPiecesDone failed: %s",
+                       getCuid(), e.what()));
     }
-    } // switch (downloadSubState_)
-  }
 
-  // All chunks downloaded — mark the download as complete in PieceStorage
-  // so the engine transitions the RequestGroup to "complete" state.
-  try {
-    auto ps = getRequestGroup()->getPieceStorage();
-    if (ps) {
-      ps->markAllPiecesDone();
-    }
+    return true;
   }
   catch (RecoverableException& e) {
-    A2_LOG_DEBUG(fmt("CUID#%" PRId64
-                     " - ED2K: failed to mark all pieces done: %s",
-                     getCuid(), e.what()));
-  }
-
-  return true;
-}
-
-bool Ed2kDownloadCommand::verifyChunkMd4(int chunkIndex,
-                                         const unsigned char* data, size_t len)
-{
-  // Compute MD4 hash of the chunk data
-  std::string computedHash = Ed2kHelper::computeMd4(data, len);
-
-  A2_LOG_DEBUG(fmt("CUID#%" PRId64 " - ED2K chunk %d MD4 hash: %s",
-                   getCuid(), chunkIndex, computedHash.c_str()));
-
-  // For now, we accept the chunk if the hash computation succeeds
-  // In a full implementation, this would compare against received
-  // per-chunk hashes from the Part Hash Set message
-  if (computedHash.empty()) {
-    A2_LOG_ERROR(fmt("CUID#%" PRId64 " - ED2K chunk %d MD4 hash computation "
-                     "failed",
-                     getCuid(), chunkIndex));
+    A2_LOG_WARN(fmt("CUID#%" PRId64 " - ED2K download error: %s,"
+                    " trying next peer", getCuid(), e.what()));
+    tryNextPeer();
     return false;
   }
-
-  return true;
 }
 
-bool Ed2kDownloadCommand::writeChunkToDisk(int chunkIndex,
+// ============================================================================
+// Disk I/O and progress
+// ============================================================================
+
+bool Ed2kDownloadCommand::writeBlockToDisk(int64_t offset,
                                            const unsigned char* data,
                                            size_t len)
 {
@@ -671,18 +1024,37 @@ bool Ed2kDownloadCommand::writeChunkToDisk(int chunkIndex,
   }
 
   try {
-    int64_t offset = static_cast<int64_t>(chunkIndex) * ED2K_CHUNK_SIZE;
-    auto diskAdaptor = getRequestGroup()->getPieceStorage()->getDiskAdaptor();
-    diskAdaptor->writeData(data, len, offset);
+    auto ps = getRequestGroup()->getPieceStorage();
+    if (!ps || !ps->getDiskAdaptor()) {
+      A2_LOG_ERROR(fmt("CUID#%" PRId64 " - ED2K: no disk adaptor available",
+                       getCuid()));
+      return false;
+    }
+    ps->getDiskAdaptor()->writeData(data, len, offset);
     return true;
   }
   catch (RecoverableException& e) {
-    A2_LOG_ERROR_EX(fmt("CUID#%" PRId64 " - ED2K failed to write chunk %d "
-                        "to disk at offset %" PRId64,
-                        getCuid(), chunkIndex,
-                        static_cast<int64_t>(chunkIndex) * ED2K_CHUNK_SIZE),
+    A2_LOG_ERROR_EX(fmt("CUID#%" PRId64 " - ED2K disk write failed at"
+                        " offset %" PRId64 ": %s",
+                        getCuid(), offset, e.what()),
                     e);
     return false;
+  }
+}
+
+void Ed2kDownloadCommand::updateProgress()
+{
+  try {
+    auto ps = getRequestGroup()->getPieceStorage();
+    if (ps) {
+      // markPiecesDone sets the bitfield for all pieces up to
+      // downloadedLength_, which matches ED2K's sequential download order.
+      ps->markPiecesDone(downloadedLength_);
+    }
+  }
+  catch (RecoverableException& e) {
+    A2_LOG_DEBUG(fmt("CUID#%" PRId64 " - ED2K: updateProgress failed: %s",
+                     getCuid(), e.what()));
   }
 }
 

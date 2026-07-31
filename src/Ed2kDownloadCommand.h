@@ -39,6 +39,21 @@
 
 namespace aria2 {
 
+// Ed2kDownloadCommand implements the full eDonkey2000 protocol for
+// downloading a file via ED2K links.
+//
+// The eDonkey protocol is P2P: the server only provides source lists
+// (peers who have the file). Actual file data is downloaded from peers.
+//
+// Flow:
+//   1. Connect to server (done by Ed2kInitiateConnectionCommand)
+//   2. SERVER_LOGIN: send OP_LOGINREQUEST, receive OP_IDCHANGE
+//   3. SERVER_GET_SOURCES: send OP_GETFILESOURCES, receive OP_FOUNDSOURCES
+//   4. PEER_CONNECT: establish TCP connection to a peer from the source list
+//   5. PEER_HANDSHAKE: send OP_HELLO, receive OP_HELLOANSWER
+//   6. PEER_START_UPLOAD: send OP_STARTUPLOADREQ, receive OP_ACCEPTUPLOADREQ
+//   7. PEER_DOWNLOAD: send OP_REQUESTPARTS, receive OP_SENDINGPART data
+//   8. Write data to disk, update progress, repeat until file complete
 class Ed2kDownloadCommand : public AbstractCommand {
 public:
   Ed2kDownloadCommand(cuid_t cuid, const std::shared_ptr<Request>& req,
@@ -50,70 +65,106 @@ public:
 
   virtual bool execute() CXX11_OVERRIDE;
 
-  // Set file hash and size for ED2K download
   void setFileHash(const std::string& hash);
   void setFileSize(uint64_t size);
+  void setServerAddr(const std::string& addr, uint16_t port);
 
 protected:
   virtual bool executeInternal() CXX11_OVERRIDE;
 
 private:
-  // ED2K download states
-  // NOTE: Avoid using ERROR as enum value because windows.h #define ERROR 0
-  // which causes compilation failure on MinGW/MSVC.
+  // Main protocol states. The command transitions through these states
+  // sequentially: server phase (login + source discovery) then peer phase
+  // (handshake + upload + download).
   enum class Ed2kState {
-    HANDSHAKE,
-    FILE_INFO,
-    DOWNLOADING,
+    SERVER_LOGIN,        // Login to ED2K server
+    SERVER_GET_SOURCES,  // Request file sources from server
+    PEER_CONNECT,        // Establish TCP connection to a peer
+    PEER_HANDSHAKE,      // Exchange hello messages with peer
+    PEER_START_UPLOAD,   // Request upload slot from peer
+    PEER_DOWNLOAD,       // Download file data from peer
     FINISHED,
     FAILURE
   };
 
-  // Sub-states within the DOWNLOADING phase. Because the socket is
-  // non-blocking, execute() may return false mid-chunk; these sub-states
-  // ensure we resume correctly without re-sending protocol messages.
+  // Sub-states within PEER_DOWNLOAD. Because the socket is non-blocking,
+  // execute() may return false mid-block; these sub-states ensure we
+  // resume correctly.
   enum class DownloadSubState {
-    REQUEST_UPLOAD,      // Need to send START_UPLOAD_REQ for current chunk
-    WAIT_ACCEPT_UPLOAD,  // Waiting for ACCEPT_UPLOAD_REQ
-    RECEIVING_DATA,      // Receiving SENDING_PART frames for the chunk
-    CHUNK_COMPLETE       // Chunk done, advance to next
+    REQUEST_PARTS,   // Need to send OP_REQUESTPARTS for current block
+    RECEIVING_DATA   // Waiting for OP_SENDINGPART response
   };
 
+  // --- File info ---
   std::string fileHash_;
   uint64_t fileSize_;
   int64_t downloadedLength_;
-  std::shared_ptr<SocketCore> socket_;
+
+  // --- State machine ---
   Ed2kState state_;
   DownloadSubState downloadSubState_;
-  int currentChunk_;
-  int totalChunks_;
-  // Track whether the outgoing request for each phase has been queued,
-  // so re-entry into execute() doesn't re-send it and corrupt the stream.
-  bool handshakeSent_;
-  bool fileRequestSent_;
 
-  // Persistent I/O buffers — survive across execute() calls so that
-  // partial reads/writes (EAGAIN) don't desynchronize the protocol stream.
+  // --- Server info (for OP_HELLO) ---
+  std::string serverAddr_;
+  uint16_t serverPort_;
+
+  // --- Source/peer management ---
+  struct PeerSource {
+    std::string addr;
+    uint16_t port;
+  };
+  std::vector<PeerSource> sources_;
+  size_t currentSourceIndex_;
+
+  // --- Download progress ---
+  int64_t downloadOffset_;  // Current byte offset in the file
+
+  // --- Message-sent flags (prevent re-sending on execute() re-entry) ---
+  bool loginSent_;
+  bool sourcesRequested_;
+  bool helloSent_;
+  bool uploadReqSent_;
+  bool partsRequested_;
+
+  // --- Persistent I/O buffers (survive across execute() calls) ---
   std::vector<unsigned char> sendBuffer_;
   std::vector<unsigned char> recvBuffer_;
-  // Accumulator for the current chunk's data during download.
-  std::vector<unsigned char> currentChunkData_;
 
-  bool handshake();
-  bool requestFileInfo();
-  bool receiveData();
-  bool verifyChunkMd4(int chunkIndex, const unsigned char* data, size_t len);
-  bool writeChunkToDisk(int chunkIndex, const unsigned char* data, size_t len);
+  // --- Current block request info ---
+  int64_t requestStart_;
+  int64_t requestEnd_;
 
-  // Append a complete ED2K message (length + type + payload) to sendBuffer_.
+  // --- Server phase methods ---
+  bool serverLogin();
+  bool serverGetSources();
+
+  // --- Peer phase methods ---
+  bool peerConnect();
+  bool peerHandshake();
+  bool peerStartUpload();
+  bool peerDownload();
+
+  // Advance to the next peer source. If no more sources, transitions
+  // to FAILURE state.
+  void tryNextPeer();
+
+  // Write received data block to disk at the given offset.
+  bool writeBlockToDisk(int64_t offset, const unsigned char* data, size_t len);
+
+  // Update PieceStorage to reflect downloaded bytes (for progress UI).
+  void updateProgress();
+
+  // --- Low-level protocol helpers ---
+  // Append a complete ED2K message (4-byte LE length + 0xE3 protocol byte
+  // + 1-byte type + payload) to sendBuffer_.
   void queueMessage(unsigned char msgType, const unsigned char* payload,
                     size_t payloadLen);
-  // Write as much of sendBuffer_ as the socket accepts. Returns true when
-  // the buffer is fully flushed.
+  // Write as much of sendBuffer_ as the socket accepts.
+  // Returns true when the buffer is fully flushed.
   bool flushSendBuffer();
   // Read available data into recvBuffer_ and, if a complete message is
-  // present, extract it into msgType/payload. Returns true on success,
-  // false if no complete message is available yet.
+  // present, extract it into msgType/payload.
+  // Returns true on success, false if no complete message is available yet.
   bool tryReceiveMessage(unsigned char& msgType,
                          std::vector<unsigned char>& payload);
 };

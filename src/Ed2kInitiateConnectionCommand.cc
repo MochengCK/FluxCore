@@ -208,9 +208,10 @@ bool Ed2kInitiateConnectionCommand::execute()
     auto c = make_unique<Ed2kDownloadCommand>(
         getCuid(), getRequest(), getFileEntry(), getRequestGroup(),
         getDownloadEngine(), serverSocket);
-    
+
     c->setFileHash(fileInfo.filehash);
     c->setFileSize(fileInfo.filesize);
+    c->setServerAddr(connectedAddr, connectedPort);
     c->setStatus(Command::STATUS_ONESHOT_REALTIME);
     getDownloadEngine()->setNoWait(true);
     getDownloadEngine()->addCommand(std::move(c));
