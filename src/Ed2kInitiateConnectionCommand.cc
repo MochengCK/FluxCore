@@ -66,6 +66,16 @@ Ed2kInitiateConnectionCommand::Ed2kInitiateConnectionCommand(
 
 Ed2kInitiateConnectionCommand::~Ed2kInitiateConnectionCommand() = default;
 
+std::unique_ptr<Command> Ed2kInitiateConnectionCommand::createNextCommand(
+    const std::string& hostname, const std::string& addr, uint16_t port,
+    const std::vector<std::string>& resolvedAddresses,
+    const std::shared_ptr<Request>& proxyRequest)
+{
+  // ED2K connections use a custom execute() flow that bypasses
+  // the standard InitiateConnectionCommand pipeline.
+  return nullptr;
+}
+
 bool Ed2kInitiateConnectionCommand::execute()
 {
   // ED2K links are of the form:

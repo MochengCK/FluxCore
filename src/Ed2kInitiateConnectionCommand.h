@@ -48,6 +48,13 @@ public:
   virtual ~Ed2kInitiateConnectionCommand();
 
   virtual bool execute() override;
+
+protected:
+  virtual std::unique_ptr<Command>
+  createNextCommand(const std::string& hostname, const std::string& addr,
+                    uint16_t port,
+                    const std::vector<std::string>& resolvedAddresses,
+                    const std::shared_ptr<Request>& proxyRequest) override;
 };
 
 } // namespace aria2
