@@ -97,7 +97,11 @@ int LibuvEventPoll::KSocketEntry::getEvents() const
   return events;
 }
 
-LibuvEventPoll::LibuvEventPoll() { loop_ = uv_loop_new(); }
+LibuvEventPoll::LibuvEventPoll()
+{
+  loop_ = new uv_loop_t;
+  uv_loop_init(loop_);
+}
 
 LibuvEventPoll::~LibuvEventPoll()
 {
@@ -108,7 +112,8 @@ LibuvEventPoll::~LibuvEventPoll()
   uv_run(loop_, (uv_run_mode)(UV_RUN_ONCE | UV_RUN_NOWAIT));
 
   if (loop_) {
-    uv_loop_delete(loop_);
+    uv_loop_close(loop_);
+    delete loop_;
     loop_ = nullptr;
   }
 
