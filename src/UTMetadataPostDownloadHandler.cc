@@ -113,8 +113,9 @@ void UTMetadataPostDownloadHandler::getNextRequestGroups(
     }
     auto rgman = requestGroup->getRequestGroupMan();
 
-    if (rgman && rgman->getKeepRunning() &&
-        requestGroup->getOption()->getAsBool(PREF_PAUSE_METADATA)) {
+    // 磁力链接元数据下载完成后，强制暂停新创建的 BT 任务，
+    // 让用户选择要下载的文件（仅对多文件种子有意义，单文件由前端自动恢复）
+    if (rgman && rgman->getKeepRunning()) {
       for (auto& rg : newRgs) {
         rg->setPauseRequested(true);
       }
