@@ -60,6 +60,7 @@
 #include "Logger.h"
 #include "LogFactory.h"
 #include "util.h"
+#include <cstdint>
 #include "wallclock.h"
 #include "A2STR.h"
 #include "Ed2kHelper.h"

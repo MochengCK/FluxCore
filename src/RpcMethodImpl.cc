@@ -172,6 +172,7 @@ const char KEY_STATUS_RIGHT_TEXT[] = "statusRightText";
 const char HINT_BT_SEEDING_CONTINUE[] = "task.bt-seeding-continue";
 const char HINT_MAGNET_FETCHING_METADATA[] = "task.magnet-fetching-metadata";
 const char HINT_WAITING_DOWNLOAD_DATA[] = "task.waiting-download-data";
+const char HINT_ED2K_SEARCHING_SOURCES[] = "task.ed2k-searching-sources";
 const char HINT_BT_CHECKING_LOCAL_DATA[] = "task.bt-checking-local-data";
 const char HINT_DOWNLOAD_FAIL_NOTIFY[] = "task.download-fail-notify";
 const char HINT_STATUS_PAUSED[] = "task.status-paused";
@@ -1018,6 +1019,21 @@ void gatherStatusHintForProgress(Dict* entryDict,
     const bool done = total > 0 && completed >= total;
     if (hashCheckSeed == "true" && done) {
       hint = HINT_BT_CHECKING_LOCAL_DATA;
+    }
+  }
+
+  // Check for ED2K tasks - show source-finding status instead of generic
+  // "waiting for data" hint.
+  if (hint.empty() && !isBt && dctx) {
+    auto fe = dctx->getFirstRequestedFileEntry();
+    if (fe) {
+      const auto& uris = fe->getUris();
+      if (!uris.empty() && uris[0].compare(0, 7, "ed2k://") == 0) {
+        // ED2K task: show source-finding status when active with no speed
+        if (isActive && stat.downloadSpeed <= 0) {
+          hint = HINT_ED2K_SEARCHING_SOURCES;
+        }
+      }
     }
   }
 
