@@ -54,6 +54,8 @@
 #include "RpcRequest.h"
 #include "PieceStorage.h"
 #include "DownloadContext.h"
+#include "ContextAttribute.h"
+#include "Ed2kHelper.h"
 #include "DiskAdaptor.h"
 #include "FileEntry.h"
 #include "prefs.h"
@@ -1345,7 +1347,76 @@ std::unique_ptr<ValueBase> GetPeersRpcMethod::process(const RpcRequest& req,
   
   auto btObject = e->getBtRegistry()->get(group->getGID());
   if (!btObject) {
-    // 如果不是BT任务，返回空的分类结构
+    // Check if this is an ED2K task by looking for the ED2K context attribute.
+    auto& dctx = group->getDownloadContext();
+    if (dctx && dctx->hasAttribute(CTX_ATTR_ED2K)) {
+      auto ed2kAttr = std::dynamic_pointer_cast<Ed2kContextAttribute>(
+          dctx->getAttribute(CTX_ATTR_ED2K));
+      if (ed2kAttr) {
+        auto result = Dict::g();
+        auto connectedList = List::g();
+        auto attemptingList = List::g();
+        auto disconnectedList = List::g();
+        auto bannedList = List::g();
+
+        for (const auto& s : ed2kAttr->sources) {
+          auto entry = Dict::g();
+          entry->put(KEY_IP, s.addr);
+          entry->put(KEY_PORT, util::uitos(s.port));
+          // Map ED2K source state to a human-readable string.
+          const char* stateStr = "NEW";
+          switch (s.state) {
+          case Ed2kSourceStateRpc::NEW:         stateStr = "NEW"; break;
+          case Ed2kSourceStateRpc::CONNECTING:  stateStr = "CONNECTING"; break;
+          case Ed2kSourceStateRpc::CONNECTED:   stateStr = "CONNECTED"; break;
+          case Ed2kSourceStateRpc::DOWNLOADING: stateStr = "DOWNLOADING"; break;
+          case Ed2kSourceStateRpc::QUEUED:      stateStr = "QUEUED"; break;
+          case Ed2kSourceStateRpc::FAILED:      stateStr = "FAILED"; break;
+          case Ed2kSourceStateRpc::EXPIRED:     stateStr = "EXPIRED"; break;
+          }
+          entry->put("ed2kState", stateStr);
+          entry->put("queuePosition", Integer::g(s.queuePosition));
+          entry->put("availableParts", Integer::g(s.availablePartsCount));
+          entry->put("totalParts", Integer::g(s.totalPartsCount));
+          entry->put("source", std::string("ed2k"));
+
+          // Categorize into BT-like groups for frontend compatibility.
+          switch (s.state) {
+          case Ed2kSourceStateRpc::CONNECTED:
+          case Ed2kSourceStateRpc::DOWNLOADING:
+          case Ed2kSourceStateRpc::QUEUED:
+            connectedList->append(std::move(entry));
+            break;
+          case Ed2kSourceStateRpc::CONNECTING:
+          case Ed2kSourceStateRpc::NEW:
+            attemptingList->append(std::move(entry));
+            break;
+          case Ed2kSourceStateRpc::EXPIRED:
+            bannedList->append(std::move(entry));
+            break;
+          case Ed2kSourceStateRpc::FAILED:
+          default:
+            disconnectedList->append(std::move(entry));
+            break;
+          }
+        }
+
+        result->put("connected", std::move(connectedList));
+        result->put("attempting", std::move(attemptingList));
+        result->put("disconnected", std::move(disconnectedList));
+        result->put("banned", std::move(bannedList));
+        // ED2K-specific metadata.
+        auto meta = Dict::g();
+        meta->put("serverAddr", ed2kAttr->serverAddr);
+        meta->put("serverPort", util::uitos(ed2kAttr->serverPort));
+        meta->put("kadEnabled", ed2kAttr->kadEnabled ? VLB_TRUE : VLB_FALSE);
+        meta->put("kadState", ed2kAttr->kadState);
+        result->put("ed2kMeta", std::move(meta));
+        return std::move(result);
+      }
+    }
+
+    // Not BT and not ED2K — return empty structure.
     auto result = Dict::g();
     result->put("connected", List::g());
     result->put("attempting", List::g());

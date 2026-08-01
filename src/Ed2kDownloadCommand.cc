@@ -416,6 +416,9 @@ bool Ed2kDownloadCommand::execute()
                    getCuid(), static_cast<int>(state_),
                    downloadOffset_, static_cast<int64_t>(fileSize_)));
 
+  // Update the ED2K context attribute so RPC getPeers can report sources.
+  updateContextAttribute();
+
   if (getRequestGroup()->downloadFinished() ||
       getRequestGroup()->isHaltRequested()) {
     return true;
@@ -2682,6 +2685,53 @@ void Ed2kDownloadCommand::checkServerSourceRefresh()
     loginSent_ = false;
     sourcesRequested_ = false;
     state_ = Ed2kState::SERVER_CONNECT;
+  }
+}
+
+// ============================================================================
+// Context attribute update (for RPC getPeers)
+// ============================================================================
+
+void Ed2kDownloadCommand::updateContextAttribute()
+{
+  auto dc = getDownloadContext();
+  if (!dc) return;
+
+  auto attr = std::dynamic_pointer_cast<Ed2kContextAttribute>(
+      dc->getAttribute(CTX_ATTR_ED2K));
+  if (!attr) {
+    attr = std::make_shared<Ed2kContextAttribute>();
+    dc->setAttribute(CTX_ATTR_ED2K, attr);
+  }
+
+  // Snapshot current sources.
+  attr->sources.clear();
+  for (const auto& s : sources_) {
+    Ed2kSourceInfoRpc info;
+    info.addr = s.addr;
+    info.port = s.port;
+    info.state = static_cast<Ed2kSourceStateRpc>(s.state);
+    info.queuePosition = s.queuePosition;
+    info.availablePartsCount = 0;
+    info.totalPartsCount = static_cast<int>(s.availableParts.size());
+    for (bool avail : s.availableParts) {
+      if (avail) info.availablePartsCount++;
+    }
+    attr->sources.push_back(std::move(info));
+  }
+
+  // Server info.
+  attr->serverAddr = serverAddr_;
+  attr->serverPort = serverPort_;
+
+  // KAD state.
+  attr->kadEnabled = kadEnabled_;
+  switch (kadState_) {
+  case KadState::BOOTSTRAP:    attr->kadState = "BOOTSTRAP"; break;
+  case KadState::READY:        attr->kadState = "READY"; break;
+  case KadState::SEARCHING:    attr->kadState = "SEARCHING"; break;
+  case KadState::WAIT_RESPONSE:attr->kadState = "WAIT_RESPONSE"; break;
+  case KadState::COMPLETE:     attr->kadState = "COMPLETE"; break;
   }
 }
 

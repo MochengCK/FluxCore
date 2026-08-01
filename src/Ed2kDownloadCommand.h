@@ -392,6 +392,10 @@ private:
   bool tryReceiveMessage(unsigned char& msgType,
                          std::vector<unsigned char>& payload,
                          unsigned char& msgProtocol);
+
+  // Update the ED2K context attribute on the DownloadContext so that
+  // RPC getPeers can report source info to the frontend.
+  void updateContextAttribute();
 };
 
 } // namespace aria2

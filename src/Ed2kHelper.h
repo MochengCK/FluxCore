@@ -36,13 +36,46 @@
 #define D_ED2K_HELPER_H
 
 #include "common.h"
+#include "ContextAttribute.h"
 
 #include <string>
 #include <vector>
 #include <memory>
+#include <atomic>
 
 namespace aria2 {
 class Option;
+
+// ED2K source state for RPC reporting (mirrors Ed2kDownloadCommand::SourceState)
+enum class Ed2kSourceStateRpc {
+  NEW,
+  CONNECTING,
+  CONNECTED,
+  DOWNLOADING,
+  QUEUED,
+  FAILED,
+  EXPIRED
+};
+
+// A snapshot of one ED2K source, accessible via RPC getPeers.
+struct Ed2kSourceInfoRpc {
+  std::string addr;
+  uint16_t port;
+  Ed2kSourceStateRpc state;
+  int queuePosition;
+  int availablePartsCount;
+  int totalPartsCount;
+};
+
+// Context attribute stored on DownloadContext for ED2K tasks.
+// Ed2kDownloadCommand updates this periodically; GetPeersRpcMethod reads it.
+struct Ed2kContextAttribute : public ContextAttribute {
+  std::vector<Ed2kSourceInfoRpc> sources;
+  std::string serverAddr;
+  uint16_t serverPort = 0;
+  std::string kadState; // BOOTSTRAP, READY, SEARCHING, WAIT_RESPONSE, COMPLETE
+  bool kadEnabled = false;
+};
 
 struct Ed2kLinkInfo {
   std::string name;
