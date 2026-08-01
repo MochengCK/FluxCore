@@ -2697,8 +2697,11 @@ void Ed2kDownloadCommand::updateContextAttribute()
   auto dc = getDownloadContext();
   if (!dc) return;
 
-  auto attr = std::dynamic_pointer_cast<Ed2kContextAttribute>(
-      dc->getAttribute(CTX_ATTR_ED2K));
+  std::shared_ptr<Ed2kContextAttribute> attr;
+  if (dc->hasAttribute(CTX_ATTR_ED2K)) {
+    attr = std::dynamic_pointer_cast<Ed2kContextAttribute>(
+        dc->getAttribute(CTX_ATTR_ED2K));
+  }
   if (!attr) {
     attr = std::make_shared<Ed2kContextAttribute>();
     dc->setAttribute(CTX_ATTR_ED2K, attr);
