@@ -41,13 +41,8 @@
 
 #include "util.h"
 #include "a2functional.h"
-#include "SocketCore.h"
 #include "Option.h"
 #include "prefs.h"
-#include "Logger.h"
-#include "LogFactory.h"
-#include "fmt.h"
-#include "RecoverableException.h"
 
 namespace aria2 {
 
@@ -232,6 +227,40 @@ void md4Final(MD4Context* ctx, unsigned char* digest)
 }
 
 } // namespace
+
+// ============================================================================
+// Streaming MD4 (Ed2kMd4) — wraps the internal MD4 implementation so the
+// download command can hash file parts incrementally.
+// ============================================================================
+
+struct Ed2kMd4::Impl {
+  MD4Context ctx;
+};
+
+Ed2kMd4::Ed2kMd4() : impl_(make_unique<Impl>())
+{
+  md4Init(&impl_->ctx);
+}
+
+Ed2kMd4::~Ed2kMd4() = default;
+
+void Ed2kMd4::update(const unsigned char* data, size_t length)
+{
+  md4Update(&impl_->ctx, data, length);
+}
+
+void Ed2kMd4::final(unsigned char* digest)
+{
+  md4Final(&impl_->ctx, digest);
+  md4Init(&impl_->ctx); // reset for reuse
+}
+
+std::string Ed2kMd4::finalHex()
+{
+  unsigned char digest[16];
+  final(digest);
+  return util::toHex(digest, 16);
+}
 
 std::unique_ptr<Ed2kLinkInfo> Ed2kHelper::parseLink(const std::string& uri)
 {
@@ -555,80 +584,6 @@ void Ed2kHelper::parseKadBootstrapNodes(const std::string& config,
   if (nodes.empty()) {
     getDefaultKadBootstrapNodes(nodes);
   }
-}
-
-bool Ed2kHelper::sendLoginHandshake(
-    const std::shared_ptr<SocketCore>& socket,
-    const std::shared_ptr<Option>& option)
-{
-  A2_LOG_DEBUG("ED2K: Sending login handshake");
-  // ED2K login handshake packet:
-  // 16 bytes: protocol hash (MD4 of "eDonkey")
-  // 1 byte:  client version
-  // 4 bytes: client ID (0 for new connections)
-  // 2 bytes: TCP port
-  // 1 byte:  aux port
-  // 4 bytes: ED2K capabilities
-  const unsigned char handshake[] = {
-    0x5F, 0x1E, 0x51, 0x3B, 0x9C, 0xFE, 0xE7, 0x3A,
-    0x2E, 0x9B, 0xEC, 0x17, 0x63, 0xA1, 0xAE, 0xE0,
-    0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
-  };
-  try {
-    ssize_t written = socket->writeData(handshake, sizeof(handshake));
-    if (written == 0) {
-      A2_LOG_DEBUG("ED2K: Handshake not fully sent");
-      return false;
-    }
-    A2_LOG_DEBUG("ED2K: Login handshake sent successfully");
-    return true;
-  }
-  catch (RecoverableException& e) {
-    A2_LOG_DEBUG("ED2K: Failed to send login handshake");
-    return false;
-  }
-}
-
-bool Ed2kHelper::searchFile(
-    const std::shared_ptr<SocketCore>& socket,
-    const Ed2kFileInfo& fileInfo)
-{
-  A2_LOG_DEBUG(fmt("ED2K: Searching for file hash=%s", fileInfo.filehash.c_str()));
-  // Send file search request with the 16-byte file hash
-  std::vector<unsigned char> rawHash = hexToHash(fileInfo.filehash);
-  if (rawHash.size() != 16) {
-    A2_LOG_DEBUG("ED2K: Invalid file hash for search");
-    return false;
-  }
-  try {
-    // ED2K file search message: 1 byte type + 16 bytes hash
-    unsigned char msg[17];
-    msg[0] = 0x18; // File request type
-    std::memcpy(msg + 1, rawHash.data(), 16);
-    ssize_t written = socket->writeData(msg, sizeof(msg));
-    if (written == 0) {
-      return false;
-    }
-    A2_LOG_DEBUG("ED2K: File search request sent");
-    return true;
-  }
-  catch (RecoverableException& e) {
-    A2_LOG_DEBUG("ED2K: Failed to send file search request");
-    return false;
-  }
-}
-
-bool Ed2kHelper::getFileSources(
-    const std::shared_ptr<SocketCore>& socket,
-    const Ed2kFileInfo& fileInfo,
-    std::vector<Ed2kSourceEntry>& sources)
-{
-  A2_LOG_DEBUG(fmt("ED2K: Getting file sources for hash=%s", fileInfo.filehash.c_str()));
-  // In a full implementation, this would parse server response
-  // For now, return a stub indicating no sources found
-  // (the actual source discovery happens during the ED2K protocol exchange)
-  return true;
 }
 
 } // namespace aria2

@@ -42,7 +42,6 @@
 #include <memory>
 
 namespace aria2 {
-class SocketCore;
 class Option;
 
 struct Ed2kLinkInfo {
@@ -72,8 +71,34 @@ struct Ed2kFileInfo {
   std::vector<std::string> partHashes;
 };
 
+// Streaming MD4 context (RFC 1320) used for ED2K part/file hashing.
+// The ED2K file hash is computed as follows:
+//   - Split the file into 9.5MB (9,728,000 byte = 9500 KiB) parts.
+//   - If there is more than one part, the file hash is MD4 of the
+//     concatenation of all part MD4 digests.
+//   - If the file fits in a single part, the file hash is that part's MD4.
+class Ed2kMd4 {
+public:
+  Ed2kMd4();
+  ~Ed2kMd4();
+  void update(const unsigned char* data, size_t length);
+  // Writes the 16-byte digest and resets the context for reuse.
+  void final(unsigned char* digest);
+  // Convenience: hex digest of the current state (also resets).
+  std::string finalHex();
+
+private:
+  struct Impl;
+  std::unique_ptr<Impl> impl_;
+};
+
 class Ed2kHelper {
 public:
+  // ED2K part size used by the MD4 hash tree (9,728,000 bytes = 9500 KiB).
+  // This is eMule's PARTSIZE constant — getting it wrong breaks the MD4
+  // part hashing and therefore whole-file verification.
+  static constexpr int64_t PART_SIZE = 9728000;
+
   // Parse an ed2k:// link, return parsed info or nullptr if invalid
   static std::unique_ptr<Ed2kLinkInfo> parseLink(const std::string& uri);
   
@@ -117,15 +142,6 @@ public:
   // Parse user-configured KAD bootstrap node list (comma-separated host:port).
   static void parseKadBootstrapNodes(const std::string& config,
                                      std::vector<Ed2kServerEntry>& nodes);
-
-  // Send ED2K login handshake
-  static bool sendLoginHandshake(const std::shared_ptr<SocketCore>& socket, const std::shared_ptr<Option>& option);
-
-  // Search for a file on an ED2K server
-  static bool searchFile(const std::shared_ptr<SocketCore>& socket, const Ed2kFileInfo& fileInfo);
-
-  // Get file sources from an ED2K server
-  static bool getFileSources(const std::shared_ptr<SocketCore>& socket, const Ed2kFileInfo& fileInfo, std::vector<Ed2kSourceEntry>& sources);
 };
 
 } // namespace aria2

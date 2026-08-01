@@ -546,7 +546,7 @@ PrefPtr PREF_BT_METADATA_ONLY = makePref("bt-metadata-only");
 // values: true | false
 PrefPtr PREF_BT_ENABLE_LPD = makePref("bt-enable-lpd");
 // ED2K preferences
-PrefPtr PREF_ENABLE_ED2K = makePref("enable-ed2k");
+PrefPtr PREF_ENABLE_ED2K = makePref("ed2k-enabled");
 PrefPtr PREF_ED2K_LISTEN_PORT = makePref("ed2k-listen-port");
 PrefPtr PREF_ED2K_MAX_CONNECTIONS = makePref("ed2k-max-connections");
 PrefPtr PREF_ED2K_CONNECTION_TIMEOUT = makePref("ed2k-connection-timeout");

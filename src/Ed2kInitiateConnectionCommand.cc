@@ -84,6 +84,17 @@ std::unique_ptr<Command> Ed2kInitiateConnectionCommand::createNextCommand(
 
 bool Ed2kInitiateConnectionCommand::execute()
 {
+  // Honor the user's ed2k-enabled preference. When disabled, ED2K links
+  // must not be processed — refuse early with a clear error so the user
+  // sees that the protocol is turned off rather than a silent failure.
+  if (!getOption()->getAsBool(PREF_ENABLE_ED2K)) {
+    A2_LOG_INFO(fmt("CUID#%" PRId64 " - ED2K: protocol disabled"
+                    " (ed2k-enabled=false), refusing link", getCuid()));
+    getRequestGroup()->setLastErrorCode(
+        error_code::UNKNOWN_ERROR, "ED2K protocol is disabled");
+    return true;
+  }
+
   // ED2K uses a single P2P connection — the protocol handles multi-source
   // downloading internally. Force numConcurrentCommand to 1 to prevent
   // RequestGroup from spawning PREF_SPLIT (often 32) parallel
@@ -165,19 +176,35 @@ bool Ed2kInitiateConnectionCommand::execute()
       try {
         auto ps = getRequestGroup()->getPieceStorage();
         if (ps && ps->getDiskAdaptor()) {
-          // Remove any stale .aria2 control file from a previous crashed run.
-          // DefaultBtProgressInfoFile::load() on a stale/corrupt file creates
-          // invalid Piece objects that trigger a Piece::initWrCache assertion
-          // crash. ED2K downloads always start fresh — resume is handled by
-          // the session serializer (URI + options), not piece-level control.
+          // Resume support via the standard .aria2 control file.
+          // Ed2kDownloadCommand only ever marks the *contiguous written
+          // prefix* in PieceStorage, so the saved bitfield always
+          // represents bytes that are genuinely on disk. Loading it
+          // restores exactly that prefix; anything beyond it is
+          // re-downloaded.
           auto progressInfoFile = std::make_shared<DefaultBtProgressInfoFile>(
               dc, ps, getOption().get());
           if (progressInfoFile->exists()) {
-            A2_LOG_INFO(fmt("CUID#%" PRId64
-                            " - ED2K: removing stale control file",
-                            getCuid()));
-            progressInfoFile->removeFile();
+            try {
+              progressInfoFile->load();
+              A2_LOG_INFO(fmt("CUID#%" PRId64
+                              " - ED2K: resumed %" PRId64 " bytes from"
+                              " control file",
+                              getCuid(), ps->getCompletedLength()));
+            }
+            catch (RecoverableException& e) {
+              // Stale/corrupt control file (e.g. length mismatch) —
+              // start fresh rather than fail the download.
+              A2_LOG_WARN(fmt("CUID#%" PRId64
+                              " - ED2K: ignoring stale control file: %s",
+                              getCuid(), e.what()));
+              progressInfoFile->removeFile();
+            }
           }
+          // Register the control file so progress is persisted on
+          // pause/shutdown (RequestGroupMan::saveControlFile()).
+          getRequestGroup()->setProgressInfoFile(progressInfoFile);
+          getRequestGroup()->enableSaveControlFile();
 
           ps->getDiskAdaptor()->openFile();
         }
