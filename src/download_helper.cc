@@ -64,6 +64,7 @@
 #include "SegList.h"
 #include "download_handlers.h"
 #include "SimpleRandomizer.h"
+#include "Ed2kHelper.h"
 #ifdef ENABLE_BITTORRENT
 #  include "bittorrent_helper.h"
 #  include "BtConstants.h"
@@ -433,6 +434,22 @@ public:
     }
 else if (detector_.guessEd2kLink(uri)) {
       auto rg = createRequestGroup(option_, {uri});
+      // ED2K URIs carry the file size and name inline. Parse them here
+      // so that the DownloadContext has a non-zero totalLength and a
+      // correct file path immediately after session restore — before
+      // Ed2kInitiateConnectionCommand::execute() runs. Without this,
+      // a paused/resumed task shows 0 bytes total and the progress
+      // control file cannot be loaded (length mismatch).
+      Ed2kFileInfo ed2kInfo;
+      if (Ed2kHelper::parseLink(uri, ed2kInfo)) {
+        auto dctx = rg->getDownloadContext();
+        auto fe = dctx->getFirstFileEntry();
+        fe->setLength(ed2kInfo.filesize);
+        dctx->markTotalLengthIsKnown();
+        const std::string& dir = option_->get(PREF_DIR);
+        fe->setPath(util::applyDir(dir, ed2kInfo.filename));
+        fe->setSuffixPath(ed2kInfo.filename);
+      }
       rg->setNumConcurrentCommand(1);
       requestGroups_.push_back(rg);
     }

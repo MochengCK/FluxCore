@@ -160,6 +160,9 @@ bool Ed2kInitiateConnectionCommand::execute()
     getFileEntry()->setPath(util::applyDir(dir, fileInfo.filename));
     getFileEntry()->setSuffixPath(fileInfo.filename);
     getFileEntry()->setLength(fileInfo.filesize);
+    // Persist the filename via PREF_OUT so that session save/restore
+    // can recover the task name without running execute().
+    getOption()->put(PREF_OUT, fileInfo.filename);
 
     if (!pieceStorageReady) {
       // First run: PieceStorage not yet initialized.
