@@ -48,7 +48,10 @@ constexpr size_t PEER_ID_LENGTH = 20;
 
 constexpr size_t MAX_BLOCK_LENGTH = 64_k;
 
-constexpr size_t DEFAULT_MAX_OUTSTANDING_REQUEST = 6;
+// 每个 peer 的初始在途 piece 请求数从 6 提高到 16，
+// 加深请求流水线（16×16KB=256KB in-flight），
+// 高带宽高延迟网络下更快跑满单 peer 吞吐；自适应加倍逻辑不变
+constexpr size_t DEFAULT_MAX_OUTSTANDING_REQUEST = 16;
 
 // Upper Bound of the number of outstanding request
 constexpr size_t UB_MAX_OUTSTANDING_REQUEST = 256;

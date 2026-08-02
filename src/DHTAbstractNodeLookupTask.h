@@ -142,7 +142,9 @@ public:
     memcpy(targetID_, targetID, DHT_ID_LENGTH);
   }
 
-  static const size_t ALPHA = 3;
+  // DHT 查询并发度从 3 提高到 5，加快 lookup 收敛速度
+  // （Kademlia 推荐 α=3，主流客户端普遍使用更高并发）
+  static const size_t ALPHA = 5;
 
   virtual void startup() CXX11_OVERRIDE
   {

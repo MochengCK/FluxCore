@@ -209,60 +209,69 @@ TrackerWatcherCommand::~TrackerWatcherCommand()
 bool TrackerWatcherCommand::execute()
 {
   if (requestGroup_->isForceHaltRequested()) {
-    if (!trackerRequest_) {
+    bool allDone = true;
+    for (auto& entry : trackerRequests_) {
+      if (!entry.req->stopped() && !entry.req->success()) {
+        entry.req->stop(e_);
+        allDone = false;
+      }
+    }
+    if (allDone) {
       return true;
     }
-    else if (trackerRequest_->stopped() || trackerRequest_->success()) {
-      return true;
-    }
-    else {
-      trackerRequest_->stop(e_);
-      e_->setRefreshInterval(std::chrono::milliseconds(0));
-      e_->addCommand(std::unique_ptr<Command>(this));
-      return false;
-    }
+    e_->setRefreshInterval(std::chrono::milliseconds(0));
+    e_->addCommand(std::unique_ptr<Command>(this));
+    return false;
   }
   if (btAnnounce_->noMoreAnnounce()) {
     A2_LOG_DEBUG("no more announce");
     return true;
   }
-  if (!trackerRequest_) {
-    trackerRequest_ = createAnnounce(e_);
-    if (trackerRequest_) {
-      trackerRequest_->issue(e_);
-      A2_LOG_DEBUG("tracker request created");
+
+  // 收割已完成的请求：成功的提取 peer 列表并立即连接；
+  // 失败的在该 tier 内轮转到下一个 tracker 重试
+  std::vector<size_t> retryTiers;
+  for (auto it = trackerRequests_.begin(); it != trackerRequests_.end();) {
+    auto& entry = *it;
+    if (!entry.req->stopped()) {
+      ++it;
+      continue;
     }
-  }
-  else if (trackerRequest_->stopped()) {
     // We really want to make sure that tracker request has finished
-    // by checking getNumCommand() == 0. Because we reset
-    // trackerRequestGroup_, if it is still used in other Command, we
-    // will get Segmentation fault.
-    if (trackerRequest_->success()) {
-      if (trackerRequest_->processResponse(btAnnounce_)) {
-        btAnnounce_->announceSuccess();
-        btAnnounce_->resetAnnounce();
+    // by checking stopped(). Because we reset the request, if it is
+    // still used in other Command, we will get Segmentation fault.
+    bool ok = false;
+    if (entry.req->success()) {
+      btAnnounce_->setCurrentTrackerUrl(entry.baseUrl);
+      if (entry.req->processResponse(btAnnounce_)) {
+        btAnnounce_->announceSuccessForTier(entry.tierIndex);
         addConnection();
+        ok = true;
       }
-      else {
-        btAnnounce_->announceFailure();
-        if (btAnnounce_->isAllAnnounceFailed()) {
-          btAnnounce_->resetAnnounce();
-        }
-      }
-      trackerRequest_.reset();
     }
-    else {
+    if (!ok) {
       // handle errors here
-      btAnnounce_->announceFailure(); // inside it, trackers = 0.
-      trackerRequest_.reset();
-      if (btAnnounce_->isAllAnnounceFailed()) {
-        btAnnounce_->resetAnnounce();
+      if (btAnnounce_->announceFailureForTier(entry.tierIndex)) {
+        retryTiers.push_back(entry.tierIndex);
       }
+    }
+    it = trackerRequests_.erase(it);
+  }
+  for (size_t idx : retryTiers) {
+    issueTierAnnounce(e_, idx);
+  }
+
+  // 到达 announce 时间且无在飞请求 → 开启新周期，
+  // 对所有 tier 并发 announce（原实现每周期只连一个 tracker）
+  if (trackerRequests_.empty() && !btAnnounce_->noMoreAnnounce() &&
+      btAnnounce_->isAnnounceReady()) {
+    const auto tiers = btAnnounce_->beginAnnounceCycle();
+    for (size_t idx : tiers) {
+      issueTierAnnounce(e_, idx);
     }
   }
 
-  if (!trackerRequest_ && btAnnounce_->noMoreAnnounce()) {
+  if (trackerRequests_.empty() && btAnnounce_->noMoreAnnounce()) {
     A2_LOG_DEBUG("no more announce");
     return true;
   }
@@ -294,46 +303,67 @@ void TrackerWatcherCommand::addConnection()
 }
 
 std::unique_ptr<AnnRequest>
-TrackerWatcherCommand::createAnnounce(DownloadEngine* e)
+TrackerWatcherCommand::createAnnounceForTier(DownloadEngine* e,
+                                             size_t tierIndex)
 {
-  while (!btAnnounce_->isAllAnnounceFailed() &&
-         btAnnounce_->isAnnounceReady()) {
-    std::string uri = btAnnounce_->getAnnounceUrl();
-    uri_split_result res;
-    memset(&res, 0, sizeof(res));
-    if (uri_split(&res, uri.c_str()) == 0) {
-      // Without UDP tracker support, send it to normal tracker flow
-      // and make it fail.
-      std::unique_ptr<AnnRequest> treq;
-      if (udpTrackerClient_ &&
-          uri::getFieldString(res, USR_SCHEME, uri.c_str()) == "udp") {
-        uint16_t localPort;
-        localPort = e->getBtRegistry()->getTcpPort();
-        treq =
-            createUDPAnnRequest(uri::getFieldString(res, USR_HOST, uri.c_str()),
-                                res.port, localPort);
-      }
-      else {
-        treq = createHTTPAnnRequest(btAnnounce_->getAnnounceUrl());
-      }
-      btAnnounce_->announceStart(); // inside it, trackers++.
-      return treq;
-    }
-    else {
-      btAnnounce_->announceFailure();
+  std::string uri = btAnnounce_->getAnnounceUrlForTier(tierIndex);
+  if (uri.empty()) {
+    return nullptr;
+  }
+  uri_split_result res;
+  memset(&res, 0, sizeof(res));
+  if (uri_split(&res, uri.c_str()) != 0) {
+    return nullptr;
+  }
+  std::unique_ptr<AnnRequest> treq;
+  // Without UDP tracker support, send it to normal tracker flow
+  // and make it fail.
+  if (udpTrackerClient_ &&
+      uri::getFieldString(res, USR_SCHEME, uri.c_str()) == "udp") {
+    uint16_t localPort = e->getBtRegistry()->getTcpPort();
+    treq = createUDPAnnRequest(tierIndex,
+                               uri::getFieldString(res, USR_HOST, uri.c_str()),
+                               res.port, localPort);
+  }
+  else {
+    treq = createHTTPAnnRequest(uri);
+  }
+  return treq;
+}
+
+void TrackerWatcherCommand::issueTierAnnounce(DownloadEngine* e,
+                                              size_t tierIndex)
+{
+  // 防御：同一 tier 不重复在飞
+  for (const auto& entry : trackerRequests_) {
+    if (entry.tierIndex == tierIndex) {
+      return;
     }
   }
-  if (btAnnounce_->isAllAnnounceFailed()) {
-    btAnnounce_->resetAnnounce();
+  std::string baseUrl = btAnnounce_->getAnnounceBaseUrlOfTier(tierIndex);
+  auto treq = createAnnounceForTier(e, tierIndex);
+  btAnnounce_->announceStartForTier(tierIndex);
+  if (treq && treq->issue(e)) {
+    trackerRequests_.push_back({std::move(treq), tierIndex, std::move(baseUrl)});
+    A2_LOG_DEBUG("tracker request created");
+    return;
   }
-  return nullptr;
+  // 构造或发出失败：tier 内轮转到下一个 tracker 重试
+  if (btAnnounce_->announceFailureForTier(tierIndex)) {
+    issueTierAnnounce(e, tierIndex);
+  }
 }
 
 std::unique_ptr<AnnRequest>
-TrackerWatcherCommand::createUDPAnnRequest(const std::string& host,
+TrackerWatcherCommand::createUDPAnnRequest(size_t tierIndex,
+                                           const std::string& host,
                                            uint16_t port, uint16_t localPort)
 {
-  auto req = btAnnounce_->createUDPTrackerRequest(host, port, localPort);
+  auto req = btAnnounce_->createUDPTrackerRequestForTier(tierIndex, host, port,
+                                                         localPort);
+  if (!req) {
+    return nullptr;
+  }
   req->user_data = this;
 
   return make_unique<UDPAnnRequest>(std::move(req));

@@ -54,6 +54,9 @@ private:
   std::deque<std::shared_ptr<AnnounceTier>>::iterator currentTier_;
   std::deque<std::string>::iterator currentTracker_;
   bool currentTrackerInitialized_;
+  // 多 tracker 并发 announce：每个 tier 本轮已尝试的 tracker 数，
+  // 用于判断该 tier 是否已穷尽（与 tiers_ 平行）
+  std::vector<size_t> tierTried_;
 
   void resetIterator();
   void setCurrentTier(std::deque<std::shared_ptr<AnnounceTier>>::iterator itr);
@@ -135,6 +138,30 @@ public:
   bool currentTierAcceptsStoppedEvent() const;
 
   bool currentTierAcceptsCompletedEvent() const;
+
+  // === 多 tracker 并发 announce（per-tier 操作） ===
+  // per-tier 模型以各 tier 的队首 URL 作为该 tier 当前 tracker；
+  // 失败时把队首移到队尾（轮转），成功时队首即为成功者。
+
+  // 返回指定 tier 当前要 announce 的 tracker URL；无则返回空串
+  std::string getAnnounceOfTier(size_t idx) const;
+
+  // 返回/设置指定 tier 的当前事件
+  AnnounceTier::AnnounceEvent getEventOfTier(size_t idx) const;
+  void setEventOfTier(size_t idx, AnnounceTier::AnnounceEvent event);
+
+  // 指定 tier announce 成功：推进事件（STARTED→DOWNLOADING 等），
+  // 并清零该 tier 的失败计数
+  void announceSuccessOfTier(size_t idx);
+
+  // 指定 tier announce 失败：tier 内轮转到下一个 tracker。
+  // 返回 true 表示还有 tracker 可重试；false 表示该 tier 已穷尽
+  // （此时调用 nextEventIfAfterStarted 推进 STOPPED/COMPLETED 事件）
+  bool announceFailureOfTier(size_t idx);
+
+  // 指定 tier 是否接受 stopped / completed 事件
+  bool tierAcceptsStoppedEvent(size_t idx) const;
+  bool tierAcceptsCompletedEvent(size_t idx) const;
 };
 
 } // namespace aria2

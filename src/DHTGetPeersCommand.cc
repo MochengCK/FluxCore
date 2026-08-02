@@ -57,9 +57,11 @@ namespace {
 
 constexpr auto GET_PEER_INTERVAL = 15_min;
 // Interval when the size of peer list is low.
-constexpr auto GET_PEER_INTERVAL_LOW = 5_min;
+// 从 5min 缩短到 2min，peer 不足时更快地从 DHT 补充
+constexpr auto GET_PEER_INTERVAL_LOW = 2_min;
 // Interval when the peer list is empty.
-constexpr auto GET_PEER_INTERVAL_ZERO = 1_min;
+// 从 1min 缩短到 30s，零连接时更快找到首批 peer
+constexpr auto GET_PEER_INTERVAL_ZERO = 30_s;
 // Interval for retry.
 constexpr auto GET_PEER_INTERVAL_RETRY = 5_s;
 // Maximum retries. Try more than 5 to drop bad node.

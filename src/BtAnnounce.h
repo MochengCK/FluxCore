@@ -39,9 +39,11 @@
 
 #include <string>
 #include <memory>
+#include <vector>
 
 #include "a2time.h"
 #include "a2functional.h"
+#include "A2STR.h"
 
 namespace aria2 {
 
@@ -120,6 +122,52 @@ public:
   virtual void overrideMinInterval(std::chrono::seconds interval) = 0;
 
   virtual void setTcpPort(uint16_t port) = 0;
+
+  // === 多 tracker 并发 announce 扩展 ===
+  // 以下方法支持对一个 announce 周期内的所有 tier 并发 announce。
+  // 默认实现委托给旧的单 tracker 方法，保持既有 Mock / 调用方行为不变。
+
+  // 开始一个 announce 周期，返回本周期待 announce 的 tier 索引列表。
+  // 默认返回 {0}，即旧的单 tracker 行为。
+  virtual std::vector<size_t> beginAnnounceCycle() { return {0}; }
+
+  // 返回指定 tier 当前 tracker 的完整 announce URI（含参数）。
+  virtual std::string getAnnounceUrlForTier(size_t tierIndex)
+  {
+    return getAnnounceUrl();
+  }
+
+  // 返回指定 tier 当前 tracker 的基础 URL（不含参数），用于统计归属。
+  virtual std::string getAnnounceBaseUrlOfTier(size_t tierIndex)
+  {
+    return A2STR::NIL;
+  }
+
+  virtual std::shared_ptr<UDPTrackerRequest>
+  createUDPTrackerRequestForTier(size_t tierIndex,
+                                 const std::string& remoteAddr,
+                                 uint16_t remotePort, uint16_t localPort)
+  {
+    return createUDPTrackerRequest(remoteAddr, remotePort, localPort);
+  }
+
+  // 指定 tier 的 announce 已发出。
+  virtual void announceStartForTier(size_t tierIndex) { announceStart(); }
+
+  // 指定 tier 的 announce 成功。
+  virtual void announceSuccessForTier(size_t tierIndex) { announceSuccess(); }
+
+  // 指定 tier 的 announce 失败。返回 true 表示该 tier 内还有
+  // 其他 tracker 可立即重试。
+  virtual bool announceFailureForTier(size_t tierIndex)
+  {
+    announceFailure();
+    return false;
+  }
+
+  // 设置后续 processAnnounceResponse / processUDPTrackerResponse
+  // 统计归属的 tracker URL（单线程事件循环内同步使用）。
+  virtual void setCurrentTrackerUrl(const std::string& url) {}
 
   static const std::string FAILURE_REASON;
 

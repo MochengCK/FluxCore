@@ -59,9 +59,11 @@ private:
   std::string request_;
 
 public:
+  // LPD 组播 announce 间隔从 5min 缩短到 1min，
+  // 加快局域网内 peer 的相互发现（组播包开销极低）
   LpdMessageDispatcher(const std::string& infoHash, uint16_t port,
                        const std::string& multicastAddr, uint16_t multicastPort,
-                       std::chrono::seconds interval = 5_min);
+                       std::chrono::seconds interval = 1_min);
 
   ~LpdMessageDispatcher();
 

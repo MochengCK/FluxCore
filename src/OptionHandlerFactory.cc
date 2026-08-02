@@ -1676,8 +1676,10 @@ std::vector<OptionHandler*> OptionHandlerFactory::createOptionHandlers()
     handlers.push_back(op);
   }
   {
+    // peer 不活跃超时从 180s 降到 120s，死连接更快释放，
+    // 腾出额度连接更有活力的 peer
     OptionHandler* op(new NumberOptionHandler(PREF_BT_TIMEOUT, NO_DESCRIPTION,
-                                              "180", 1, 600));
+                                              "120", 1, 600));
     op->hide();
     handlers.push_back(op);
   }

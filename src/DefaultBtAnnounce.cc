@@ -155,12 +155,28 @@ bool DefaultBtAnnounce::adjustAnnounceList()
   return true;
 }
 
-std::string DefaultBtAnnounce::getAnnounceUrl()
+namespace {
+const char* announceEventToString(AnnounceTier::AnnounceEvent event)
 {
-  if (!adjustAnnounceList()) {
-    return A2STR::NIL;
+  switch (event) {
+  case AnnounceTier::STARTED:
+  case AnnounceTier::STARTED_AFTER_COMPLETION:
+    return "started";
+  case AnnounceTier::STOPPED:
+    return "stopped";
+  case AnnounceTier::COMPLETED:
+    return "completed";
+  default:
+    return "";
   }
-  int numWant = 50;
+}
+} // namespace
+
+std::string DefaultBtAnnounce::buildAnnounceUri(
+    const std::string& baseUrl, AnnounceTier::AnnounceEvent event)
+{
+  // numWant 从 50 提高到 200，单次 announce 获取更多 peer
+  int numWant = 200;
   if (!btRuntime_->lessThanMinPeers() || btRuntime_->isHalt()) {
     numWant = 0;
   }
@@ -169,7 +185,7 @@ std::string DefaultBtAnnounce::getAnnounceUrl()
       pieceStorage_->getTotalLength() - pieceStorage_->getCompletedLength();
   // Use last 8 bytes of peer ID as a key
   const size_t keyLen = 8;
-  std::string uri = announceList_.getAnnounce();
+  std::string uri = baseUrl;
   uri += uriHasQuery(uri) ? "&" : "?";
   uri +=
       fmt("info_hash=%s&"
@@ -194,10 +210,10 @@ std::string DefaultBtAnnounce::getAnnounceUrl()
   if (tcpPort_) {
     uri += fmt("&port=%u", tcpPort_);
   }
-  const char* event = announceList_.getEventString();
-  if (event[0]) {
+  const char* eventStr = announceEventToString(event);
+  if (eventStr[0]) {
     uri += "&event=";
-    uri += event;
+    uri += eventStr;
   }
   if (!trackerId_.empty()) {
     uri += "&trackerid=";
@@ -217,12 +233,22 @@ std::string DefaultBtAnnounce::getAnnounceUrl()
   return uri;
 }
 
-std::shared_ptr<UDPTrackerRequest> DefaultBtAnnounce::createUDPTrackerRequest(
-    const std::string& remoteAddr, uint16_t remotePort, uint16_t localPort)
+std::string DefaultBtAnnounce::getAnnounceUrl()
 {
   if (!adjustAnnounceList()) {
-    return nullptr;
+    return A2STR::NIL;
   }
+  const std::string& baseUrl = announceList_.getAnnounce();
+  if (baseUrl.empty()) {
+    return A2STR::NIL;
+  }
+  return buildAnnounceUri(baseUrl, announceList_.getEvent());
+}
+
+std::shared_ptr<UDPTrackerRequest> DefaultBtAnnounce::buildUDPTrackerRequest(
+    const std::string& remoteAddr, uint16_t remotePort, uint16_t localPort,
+    AnnounceTier::AnnounceEvent event)
+{
   NetStat& stat = downloadContext_->getNetStat();
   int64_t left =
       pieceStorage_->getTotalLength() - pieceStorage_->getCompletedLength();
@@ -236,7 +262,7 @@ std::shared_ptr<UDPTrackerRequest> DefaultBtAnnounce::createUDPTrackerRequest(
   req->downloaded = stat.getSessionDownloadLength();
   req->left = left;
   req->uploaded = stat.getSessionUploadLength();
-  switch (announceList_.getEvent()) {
+  switch (event) {
   case AnnounceTier::STARTED:
   case AnnounceTier::STARTED_AFTER_COMPLETION:
     req->event = UDPT_EVT_STARTED;
@@ -263,7 +289,8 @@ std::shared_ptr<UDPTrackerRequest> DefaultBtAnnounce::createUDPTrackerRequest(
     req->ip = 0;
   }
   req->key = randomizer_->getRandomNumber(INT32_MAX);
-  int numWant = 50;
+  // numWant 从 50 提高到 200，单次 announce 获取更多 peer
+  int numWant = 200;
   if (!btRuntime_->lessThanMinPeers() || btRuntime_->isHalt()) {
     numWant = 0;
   }
@@ -271,6 +298,120 @@ std::shared_ptr<UDPTrackerRequest> DefaultBtAnnounce::createUDPTrackerRequest(
   req->port = localPort;
   req->extensions = 0;
   return req;
+}
+
+std::shared_ptr<UDPTrackerRequest> DefaultBtAnnounce::createUDPTrackerRequest(
+    const std::string& remoteAddr, uint16_t remotePort, uint16_t localPort)
+{
+  if (!adjustAnnounceList()) {
+    return nullptr;
+  }
+  return buildUDPTrackerRequest(remoteAddr, remotePort, localPort,
+                                announceList_.getEvent());
+}
+
+// === 多 tracker 并发 announce 扩展实现 ===
+
+std::vector<size_t> DefaultBtAnnounce::beginAnnounceCycle()
+{
+  std::vector<size_t> tiers;
+  const size_t n = announceList_.countTier();
+  if (n == 0) {
+    return tiers;
+  }
+  // 周期起点：下一周期需等待 minInterval
+  prevAnnounceTimer_ = global::wallclock();
+  if (isStoppedAnnounceReady()) {
+    // 停止事件：向所有接受 stopped 的 tier 各发一次
+    for (size_t i = 0; i < n; ++i) {
+      if (announceList_.tierAcceptsStoppedEvent(i)) {
+        announceList_.setEventOfTier(i, AnnounceTier::STOPPED);
+        tiers.push_back(i);
+      }
+    }
+  }
+  else if (isCompletedAnnounceReady()) {
+    // 完成事件：向所有接受 completed 的 tier 各发一次
+    for (size_t i = 0; i < n; ++i) {
+      if (announceList_.tierAcceptsCompletedEvent(i)) {
+        announceList_.setEventOfTier(i, AnnounceTier::COMPLETED);
+        tiers.push_back(i);
+      }
+    }
+  }
+  else {
+    // 常规周期：对所有 tier 并发 announce
+    for (size_t i = 0; i < n; ++i) {
+      // 与 adjustAnnounceList 相同的处理：下载已完成但尚未发送过
+      // started 的 tier，事件改为 STARTED_AFTER_COMPLETION，避免
+      // 误发 completed 事件
+      if (pieceStorage_->allDownloadFinished() &&
+          announceList_.getEventOfTier(i) == AnnounceTier::STARTED) {
+        announceList_.setEventOfTier(i,
+                                     AnnounceTier::STARTED_AFTER_COMPLETION);
+      }
+      tiers.push_back(i);
+    }
+  }
+  return tiers;
+}
+
+std::string DefaultBtAnnounce::getAnnounceUrlForTier(size_t tierIndex)
+{
+  const std::string& baseUrl = announceList_.getAnnounceOfTier(tierIndex);
+  if (baseUrl.empty()) {
+    return A2STR::NIL;
+  }
+  return buildAnnounceUri(baseUrl, announceList_.getEventOfTier(tierIndex));
+}
+
+std::string DefaultBtAnnounce::getAnnounceBaseUrlOfTier(size_t tierIndex)
+{
+  return announceList_.getAnnounceOfTier(tierIndex);
+}
+
+std::shared_ptr<UDPTrackerRequest>
+DefaultBtAnnounce::createUDPTrackerRequestForTier(size_t tierIndex,
+                                                  const std::string& remoteAddr,
+                                                  uint16_t remotePort,
+                                                  uint16_t localPort)
+{
+  return buildUDPTrackerRequest(remoteAddr, remotePort, localPort,
+                                announceList_.getEventOfTier(tierIndex));
+}
+
+void DefaultBtAnnounce::announceStartForTier(size_t tierIndex)
+{
+  ++trackers_;
+  currentTrackerUrl_ = announceList_.getAnnounceOfTier(tierIndex);
+}
+
+void DefaultBtAnnounce::announceSuccessForTier(size_t tierIndex)
+{
+  if (trackers_ > 0) {
+    --trackers_;
+  }
+  announceList_.announceSuccessOfTier(tierIndex);
+}
+
+bool DefaultBtAnnounce::announceFailureForTier(size_t tierIndex)
+{
+  if (trackers_ > 0) {
+    --trackers_;
+  }
+  const std::string& url = announceList_.getAnnounceOfTier(tierIndex);
+  if (!url.empty()) {
+    TrackerStats& stats = trackerStatsMap_[url];
+    stats.status = "not-working";
+    stats.downloadCount++; // 增加连接次数
+  }
+  // tier 内轮转到下一个 tracker；返回是否还有可重试的
+  return announceList_.announceFailureOfTier(tierIndex);
+}
+
+void DefaultBtAnnounce::setCurrentTrackerUrl(const std::string& url)
+{
+  currentTrackerUrl_ = url;
 }
 
 void DefaultBtAnnounce::announceStart() { 

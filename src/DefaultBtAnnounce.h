@@ -83,6 +83,18 @@ private:
 
   bool adjustAnnounceList();
 
+  // 组装 HTTP announce URI 的公共逻辑（getAnnounceUrl 与
+  // getAnnounceUrlForTier 共用）
+  std::string buildAnnounceUri(const std::string& baseUrl,
+                               AnnounceTier::AnnounceEvent event);
+
+  // 组装 UDP announce 请求的公共逻辑（createUDPTrackerRequest 与
+  // createUDPTrackerRequestForTier 共用）
+  std::shared_ptr<UDPTrackerRequest>
+  buildUDPTrackerRequest(const std::string& remoteAddr, uint16_t remotePort,
+                         uint16_t localPort,
+                         AnnounceTier::AnnounceEvent event);
+
 public:
   DefaultBtAnnounce(DownloadContext* downloadContext, const Option* option);
 
@@ -145,6 +157,26 @@ public:
   overrideMinInterval(std::chrono::seconds interval) CXX11_OVERRIDE;
 
   virtual void setTcpPort(uint16_t port) CXX11_OVERRIDE { tcpPort_ = port; }
+
+  // === 多 tracker 并发 announce 扩展 ===
+  virtual std::vector<size_t> beginAnnounceCycle() CXX11_OVERRIDE;
+
+  virtual std::string getAnnounceUrlForTier(size_t tierIndex) CXX11_OVERRIDE;
+
+  virtual std::string
+  getAnnounceBaseUrlOfTier(size_t tierIndex) CXX11_OVERRIDE;
+
+  virtual std::shared_ptr<UDPTrackerRequest> createUDPTrackerRequestForTier(
+      size_t tierIndex, const std::string& remoteAddr, uint16_t remotePort,
+      uint16_t localPort) CXX11_OVERRIDE;
+
+  virtual void announceStartForTier(size_t tierIndex) CXX11_OVERRIDE;
+
+  virtual void announceSuccessForTier(size_t tierIndex) CXX11_OVERRIDE;
+
+  virtual bool announceFailureForTier(size_t tierIndex) CXX11_OVERRIDE;
+
+  virtual void setCurrentTrackerUrl(const std::string& url) CXX11_OVERRIDE;
 
   void setRandomizer(Randomizer* randomizer);
 

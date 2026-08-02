@@ -39,6 +39,7 @@
 
 #include <string>
 #include <memory>
+#include <vector>
 
 namespace aria2 {
 
@@ -115,7 +116,14 @@ private:
 
   std::shared_ptr<BtAnnounce> btAnnounce_;
 
-  std::unique_ptr<AnnRequest> trackerRequest_;
+  // 多 tracker 并发 announce：一个进行中的请求及其所属 tier
+  struct AnnRequestEntry {
+    std::unique_ptr<AnnRequest> req;
+    size_t tierIndex;
+    std::string baseUrl;
+  };
+
+  std::vector<AnnRequestEntry> trackerRequests_;
 
   /**
    * Returns a command for announce request. Returns 0 if no announce request
@@ -123,9 +131,18 @@ private:
    */
   std::unique_ptr<AnnRequest> createHTTPAnnRequest(const std::string& uri);
 
-  std::unique_ptr<AnnRequest> createUDPAnnRequest(const std::string& host,
+  std::unique_ptr<AnnRequest> createUDPAnnRequest(size_t tierIndex,
+                                                  const std::string& host,
                                                   uint16_t port,
                                                   uint16_t localPort);
+
+  // 为指定 tier 的当前 tracker 构造 announce 请求（HTTP/UDP）。
+  // 失败返回 nullptr。
+  std::unique_ptr<AnnRequest> createAnnounceForTier(DownloadEngine* e,
+                                                    size_t tierIndex);
+
+  // 构造并发出指定 tier 的 announce 请求；失败时 tier 内轮转重试
+  void issueTierAnnounce(DownloadEngine* e, size_t tierIndex);
 
   void addConnection();
 
@@ -136,8 +153,6 @@ public:
                         DownloadEngine* e);
 
   virtual ~TrackerWatcherCommand();
-
-  std::unique_ptr<AnnRequest> createAnnounce(DownloadEngine* e);
 
   virtual bool execute() CXX11_OVERRIDE;
 

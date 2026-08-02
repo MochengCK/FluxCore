@@ -92,6 +92,8 @@ void AnnounceList::resetIterator()
   else {
     currentTrackerInitialized_ = false;
   }
+  // 多 tracker 并发 announce 的失败计数与 tiers_ 平行重建
+  tierTried_.assign(tiers_.size(), 0);
 }
 
 std::string AnnounceList::getAnnounce() const
@@ -275,5 +277,76 @@ bool AnnounceList::currentTierAcceptsCompletedEvent() const
 }
 
 size_t AnnounceList::countTier() const { return tiers_.size(); }
+
+std::string AnnounceList::getAnnounceOfTier(size_t idx) const
+{
+  if (idx >= tiers_.size() || tiers_[idx]->urls.empty()) {
+    return A2STR::NIL;
+  }
+  return tiers_[idx]->urls.front();
+}
+
+AnnounceTier::AnnounceEvent AnnounceList::getEventOfTier(size_t idx) const
+{
+  if (idx >= tiers_.size()) {
+    return AnnounceTier::STARTED;
+  }
+  return tiers_[idx]->event;
+}
+
+void AnnounceList::setEventOfTier(size_t idx,
+                                  AnnounceTier::AnnounceEvent event)
+{
+  if (idx < tiers_.size()) {
+    tiers_[idx]->event = event;
+  }
+}
+
+void AnnounceList::announceSuccessOfTier(size_t idx)
+{
+  if (idx >= tiers_.size()) {
+    return;
+  }
+  if (idx < tierTried_.size()) {
+    tierTried_[idx] = 0;
+  }
+  // 轮转模型下当前 tracker 就在队首，无需移动；
+  // 推进事件（STARTED→DOWNLOADING、STOPPED→HALTED 等）
+  tiers_[idx]->nextEvent();
+}
+
+bool AnnounceList::announceFailureOfTier(size_t idx)
+{
+  if (idx >= tiers_.size() || tiers_[idx]->urls.empty()) {
+    return false;
+  }
+  auto& tier = tiers_[idx];
+  const size_t tried = (idx < tierTried_.size() ? tierTried_[idx] : 0) + 1;
+  // 轮转：当前 tracker 移到队尾，下一个成为队首
+  tier->urls.push_back(tier->urls.front());
+  tier->urls.pop_front();
+  if (tried >= tier->urls.size()) {
+    // 该 tier 的所有 tracker 都失败了
+    if (idx < tierTried_.size()) {
+      tierTried_[idx] = 0;
+    }
+    tier->nextEventIfAfterStarted();
+    return false;
+  }
+  if (idx < tierTried_.size()) {
+    tierTried_[idx] = tried;
+  }
+  return true;
+}
+
+bool AnnounceList::tierAcceptsStoppedEvent(size_t idx) const
+{
+  return idx < tiers_.size() && FindStoppedAllowedTier()(tiers_[idx]);
+}
+
+bool AnnounceList::tierAcceptsCompletedEvent(size_t idx) const
+{
+  return idx < tiers_.size() && FindCompletedAllowedTier()(tiers_[idx]);
+}
 
 } // namespace aria2

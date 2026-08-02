@@ -124,8 +124,10 @@ void BtSetup::setup(std::vector<std::unique_ptr<Command>>& commands,
     commands.push_back(std::move(c));
   }
   {
+    // 每秒检查一次是否需要发起新的 peer 连接（原 2s/3s），
+    // 加快新发现的 peer 被实际连接的速度
     auto c = make_unique<ActivePeerConnectionCommand>(
-        e->newCUID(), requestGroup, e, metadataGetMode ? 2_s : 3_s);
+        e->newCUID(), requestGroup, e, 1_s);
     c->setBtRuntime(btRuntime);
     c->setPieceStorage(pieceStorage);
     c->setPeerStorage(peerStorage);
