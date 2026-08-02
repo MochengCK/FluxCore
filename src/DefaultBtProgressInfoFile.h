@@ -95,7 +95,7 @@ public:
 
   static const std::string& getSuffix()
   {
-    static std::string suffix = ".aria2";
+    static std::string suffix = ".xfer";
     return suffix;
   }
 };
