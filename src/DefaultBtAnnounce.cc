@@ -506,25 +506,17 @@ void DefaultBtAnnounce::processAnnounceResponse(
     incomplete_ = incomp->i();
     A2_LOG_DEBUG(fmt("Incomplete:%d", incomplete_));
   }
-  if (!currentTrackerUrl_.empty()) {
-    TrackerStats& stats = trackerStatsMap_[currentTrackerUrl_];
-    stats.seeders = complete_;
-    stats.leechers = incomplete_;
-    stats.status = "working";
-    stats.failureReason = "";  // 清除失败原因
-    stats.downloadCount++;  // 增加连接次数
-    // 计算下次连接时间
-    stats.nextAnnounceTime = std::chrono::system_clock::now() + 
-                             std::chrono::duration_cast<std::chrono::system_clock::duration>(minInterval_);
-  }
+  // 统计本次 announce 返回的节点数（独立于是否真正加入 peerStorage）
+  int receivedPeerCount = 0;
   auto peerData = dict->get(BtAnnounce::PEERS);
   if (!peerData) {
     A2_LOG_INFO(MSG_NO_PEER_LIST_RECEIVED);
   }
   else {
+    std::vector<std::shared_ptr<Peer>> peers;
+    bittorrent::extractPeer(peerData, AF_INET, std::back_inserter(peers));
+    receivedPeerCount += static_cast<int>(peers.size());
     if (!btRuntime_->isHalt() && btRuntime_->lessThanMinPeers()) {
-      std::vector<std::shared_ptr<Peer>> peers;
-      bittorrent::extractPeer(peerData, AF_INET, std::back_inserter(peers));
       peerStorage_->addPeer(peers);
     }
   }
@@ -533,11 +525,24 @@ void DefaultBtAnnounce::processAnnounceResponse(
     A2_LOG_INFO("No peers6 received.");
   }
   else {
+    std::vector<std::shared_ptr<Peer>> peers;
+    bittorrent::extractPeer(peer6Data, AF_INET6, std::back_inserter(peers));
+    receivedPeerCount += static_cast<int>(peers.size());
     if (!btRuntime_->isHalt() && btRuntime_->lessThanMinPeers()) {
-      std::vector<std::shared_ptr<Peer>> peers;
-      bittorrent::extractPeer(peer6Data, AF_INET6, std::back_inserter(peers));
       peerStorage_->addPeer(peers);
     }
+  }
+  if (!currentTrackerUrl_.empty()) {
+    TrackerStats& stats = trackerStatsMap_[currentTrackerUrl_];
+    stats.seeders = complete_;
+    stats.leechers = incomplete_;
+    stats.status = "working";
+    stats.failureReason = "";  // 清除失败原因
+    stats.downloadCount++;  // 增加连接次数
+    stats.peers = receivedPeerCount;  // 记录本次返回的节点数
+    // 计算下次连接时间
+    stats.nextAnnounceTime = std::chrono::system_clock::now() +
+                             std::chrono::duration_cast<std::chrono::system_clock::duration>(minInterval_);
   }
 }
 
@@ -563,8 +568,9 @@ void DefaultBtAnnounce::processUDPTrackerResponse(
     stats.status = "working";
     stats.failureReason = "";  // 清除失败原因
     stats.downloadCount++;  // 增加连接次数
+    stats.peers = static_cast<int>(reply->peers.size());  // 记录本次返回的节点数
     // 计算下次连接时间
-    stats.nextAnnounceTime = std::chrono::system_clock::now() + 
+    stats.nextAnnounceTime = std::chrono::system_clock::now() +
                              std::chrono::duration_cast<std::chrono::system_clock::duration>(minInterval_);
   }
   if (!btRuntime_->isHalt() && btRuntime_->lessThanMinPeers()) {

@@ -1751,12 +1751,6 @@ std::unique_ptr<ValueBase> GetTrackersRpcMethod::process(const RpcRequest& req,
     return List::g();
   }
 
-  int currentPeers = 0;
-  if (btObject->peerStorage) {
-    auto& usedPeers = btObject->peerStorage->getUsedPeers();
-    currentPeers = static_cast<int>(usedPeers.size());
-  }
-
   auto defaultBtAnnounce = std::dynamic_pointer_cast<DefaultBtAnnounce>(btObject->btAnnounce);
   const auto& trackerStatsMap = defaultBtAnnounce ? defaultBtAnnounce->getTrackerStatsMap() : std::map<std::string, TrackerStats>();
 
@@ -1791,7 +1785,7 @@ std::unique_ptr<ValueBase> GetTrackersRpcMethod::process(const RpcRequest& req,
       auto it = trackerStatsMap.find(url);
       if (it != trackerStatsMap.end()) {
         trackerEntry->put("status", it->second.status);
-        trackerEntry->put("peers", Integer::g(currentPeers));
+        trackerEntry->put("peers", Integer::g(it->second.peers));
         trackerEntry->put("seeders", Integer::g(it->second.seeders));
         trackerEntry->put("leechers", Integer::g(it->second.leechers));
         trackerEntry->put("downloadCount", Integer::g(it->second.downloadCount));
