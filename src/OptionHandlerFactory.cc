@@ -1641,9 +1641,12 @@ std::vector<OptionHandler*> OptionHandlerFactory::createOptionHandlers()
     handlers.push_back(op);
   }
   {
+    // 该选项被 hid 后既不能通过命令行也不能通过 conf 文件设置
+    // （getopt 排除 hidden 选项，conf 解析对 hidden 选项兜底到
+    // handlers_[0] 并可能报 Unknown option），导致配置层写入的
+    // bt-request-timeout 完全无效。去掉 hide() 使其可正常配置。
     OptionHandler* op(new NumberOptionHandler(PREF_BT_REQUEST_TIMEOUT,
                                               NO_DESCRIPTION, "60", 1, 600));
-    op->hide();
     handlers.push_back(op);
   }
   {
