@@ -263,7 +263,6 @@ ssize_t AbstractDiskWriter::writeDataInternal(const unsigned char* data,
   }
   else {
     ssize_t writtenLength = 0;
-    seek(offset);
     while ((size_t)writtenLength < len) {
 #ifdef __MINGW32__
       DWORD nwrite;
@@ -275,9 +274,12 @@ ssize_t AbstractDiskWriter::writeDataInternal(const unsigned char* data,
         return -1;
       }
 #else  // !__MINGW32__
+      // pwrite() is positional: it avoids the separate lseek() system
+      // call that the old seek()+write() sequence issued per I/O, and is
+      // inherently safe against concurrent writers sharing the fd.
       ssize_t ret = 0;
-      while ((ret = write(fd_, data + writtenLength, len - writtenLength)) ==
-                 -1 &&
+      while ((ret = pwrite(fd_, data + writtenLength, len - writtenLength,
+                           offset + writtenLength)) == -1 &&
              errno == EINTR)
         ;
       if (ret == -1) {
@@ -302,7 +304,6 @@ ssize_t AbstractDiskWriter::readDataInternal(unsigned char* data, size_t len,
     return readlen;
   }
   else {
-    seek(offset);
 #ifdef __MINGW32__
     DWORD nread;
     if (ReadFile(fd_, data, len, &nread, 0)) {
@@ -312,8 +313,9 @@ ssize_t AbstractDiskWriter::readDataInternal(unsigned char* data, size_t len,
       return -1;
     }
 #else  // !__MINGW32__
+    // pread() is positional (see pwrite() above).
     ssize_t ret = 0;
-    while ((ret = read(fd_, data, len)) == -1 && errno == EINTR)
+    while ((ret = pread(fd_, data, len, offset)) == -1 && errno == EINTR)
       ;
     return ret;
 #endif // !__MINGW32__

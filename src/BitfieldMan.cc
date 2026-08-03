@@ -56,6 +56,7 @@ BitfieldMan::BitfieldMan(int32_t blockLength, int64_t totalLength)
       cachedNumMissingBlock_(0),
       cachedNumFilteredBlock_(0),
       blocks_(0),
+      sparseHint_(0),
       blockLength_(blockLength),
       filterEnabled_(false)
 {
@@ -252,59 +253,65 @@ template <typename Array>
 bool getSparseMissingUnusedIndex(size_t& index, int32_t minSplitSize,
                                  const Array& bitfield,
                                  const unsigned char* useBitfield,
-                                 int32_t blockLength, size_t blocks)
+                                 int32_t blockLength, size_t blocks,
+                                 size_t startIndex)
 {
-  BitfieldMan::Range maxRange;
-  BitfieldMan::Range currentRange;
-  size_t nextIndex = 0;
-  while (nextIndex < blocks) {
-    currentRange.startIndex = getStartIndex(nextIndex, bitfield, blocks);
-    if (currentRange.startIndex == blocks) {
-      break;
-    }
-    currentRange.endIndex =
-        getEndIndex(currentRange.startIndex, bitfield, blocks);
-
-    if (currentRange.startIndex > 0) {
-      if (bitfield::test(useBitfield, blocks, currentRange.startIndex - 1)) {
-        currentRange.startIndex = currentRange.getMidIndex();
+  // Two passes: first scan [startIndex, blocks) — for sequential
+  // downloads the next range is almost always near the previously
+  // selected index, so this makes the common case sub-linear — then wrap
+  // around to [0, startIndex) so no range is ever skipped.
+  for (int pass = 0; pass < 2; ++pass) {
+    BitfieldMan::Range maxRange;
+    BitfieldMan::Range currentRange;
+    size_t nextIndex = pass == 0 ? startIndex : 0;
+    size_t limit = pass == 0 ? blocks : startIndex;
+    while (nextIndex < limit) {
+      currentRange.startIndex = getStartIndex(nextIndex, bitfield, blocks);
+      if (currentRange.startIndex == blocks) {
+        break;
       }
+      currentRange.endIndex =
+          getEndIndex(currentRange.startIndex, bitfield, blocks);
+
+      if (currentRange.startIndex > 0) {
+        if (bitfield::test(useBitfield, blocks, currentRange.startIndex - 1)) {
+          currentRange.startIndex = currentRange.getMidIndex();
+        }
+      }
+      // If range is equal, choose a range where its startIndex-1 is
+      // set.
+      if (maxRange < currentRange ||
+          (maxRange == currentRange && maxRange.startIndex > 0 &&
+           currentRange.startIndex > 0 &&
+           (!bitfield::test(bitfield, blocks, maxRange.startIndex - 1) ||
+            bitfield::test(useBitfield, blocks, maxRange.startIndex - 1)) &&
+           bitfield::test(bitfield, blocks, currentRange.startIndex - 1) &&
+           !bitfield::test(useBitfield, blocks, currentRange.startIndex - 1))) {
+        maxRange = currentRange;
+      }
+      nextIndex = currentRange.endIndex;
     }
-    // If range is equal, choose a range where its startIndex-1 is
-    // set.
-    if (maxRange < currentRange ||
-        (maxRange == currentRange && maxRange.startIndex > 0 &&
-         currentRange.startIndex > 0 &&
-         (!bitfield::test(bitfield, blocks, maxRange.startIndex - 1) ||
-          bitfield::test(useBitfield, blocks, maxRange.startIndex - 1)) &&
-         bitfield::test(bitfield, blocks, currentRange.startIndex - 1) &&
-         !bitfield::test(useBitfield, blocks, currentRange.startIndex - 1))) {
-      maxRange = currentRange;
-    }
-    nextIndex = currentRange.endIndex;
-  }
-  if (maxRange.getSize()) {
-    if (maxRange.startIndex == 0) {
-      index = 0;
-      return true;
-    }
-    else {
-      if ((!bitfield::test(useBitfield, blocks, maxRange.startIndex - 1) &&
-           bitfield::test(bitfield, blocks, maxRange.startIndex - 1)) ||
-          (static_cast<int64_t>(maxRange.endIndex - maxRange.startIndex) *
-               blockLength >=
-           minSplitSize)) {
-        index = maxRange.startIndex;
+    if (maxRange.getSize()) {
+      if (maxRange.startIndex == 0) {
+        index = 0;
         return true;
       }
       else {
-        return false;
+        if ((!bitfield::test(useBitfield, blocks, maxRange.startIndex - 1) &&
+             bitfield::test(bitfield, blocks, maxRange.startIndex - 1)) ||
+            (static_cast<int64_t>(maxRange.endIndex - maxRange.startIndex) *
+                 blockLength >=
+             minSplitSize)) {
+          index = maxRange.startIndex;
+          return true;
+        }
+        // Range too small for minSplitSize: fall through to the wrapped
+        // pass instead of giving up — the other half of the bitfield may
+        // still hold a range large enough.
       }
     }
   }
-  else {
-    return false;
-  }
+  return false;
 }
 } // namespace
 
@@ -312,19 +319,24 @@ bool BitfieldMan::getSparseMissingUnusedIndex(
     size_t& index, int32_t minSplitSize, const unsigned char* ignoreBitfield,
     size_t ignoreBitfieldLength) const
 {
+  bool rv;
   if (filterEnabled_) {
-    return aria2::getSparseMissingUnusedIndex(
+    rv = aria2::getSparseMissingUnusedIndex(
         index, minSplitSize,
         array(ignoreBitfield) | ~array(filterBitfield_) | array(bitfield_) |
             array(useBitfield_),
-        useBitfield_, blockLength_, blocks_);
+        useBitfield_, blockLength_, blocks_, sparseHint_);
   }
   else {
-    return aria2::getSparseMissingUnusedIndex(
+    rv = aria2::getSparseMissingUnusedIndex(
         index, minSplitSize,
         array(ignoreBitfield) | array(bitfield_) | array(useBitfield_),
-        useBitfield_, blockLength_, blocks_);
+        useBitfield_, blockLength_, blocks_, sparseHint_);
   }
+  if (rv) {
+    sparseHint_ = index;
+  }
+  return rv;
 }
 
 namespace {

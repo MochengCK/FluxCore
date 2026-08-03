@@ -57,6 +57,13 @@ private:
   size_t cachedNumFilteredBlock_;
   size_t blocks_;
 
+  // Search-start hint for getSparseMissingUnusedIndex(). Sequential
+  // downloads always find their next range near the previously selected
+  // index, so starting the scan there avoids re-scanning the whole
+  // bitfield (O(blocks)) on every call. The wrapped scan from 0 is kept
+  // as fallback, so no range is ever skipped.
+  mutable size_t sparseHint_;
+
   int32_t blockLength_;
 
   bool filterEnabled_;

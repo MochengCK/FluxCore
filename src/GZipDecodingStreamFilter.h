@@ -51,7 +51,9 @@ private:
 
   size_t bytesProcessed_;
 
-  static const size_t OUTBUF_LENGTH = 16_k;
+  // 16KB -> 64KB: 每次 inflate 输出更大的解压块，减少 delegate transform
+  // 调用次数与循环迭代，提升 gzip/deflate 编码的 HTTP 响应下载吞吐
+  static const size_t OUTBUF_LENGTH = 64_k;
 
 public:
   GZipDecodingStreamFilter(std::unique_ptr<StreamFilter> delegate = nullptr);

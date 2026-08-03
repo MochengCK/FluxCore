@@ -224,6 +224,16 @@ void applySocketBufferSize(sock_t fd)
   setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, (a2_sockopt_t)&keepcnt,
              sizeof(keepcnt));
 #endif
+
+#ifdef SO_NOSIGPIPE
+  // Suppress SIGPIPE for writes to peers that closed the connection
+  // (macOS). The engine ignores SIGPIPE globally in its main entry, but
+  // setting it per-socket is robust when embedded or when the signal
+  // mask is modified by a host application.
+  int nosigpipe = 1;
+  (void)setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, (a2_sockopt_t)&nosigpipe,
+                   sizeof(nosigpipe));
+#endif // SO_NOSIGPIPE
 }
 } // namespace
 

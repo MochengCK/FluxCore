@@ -40,6 +40,7 @@
 #include <cstdio>
 #include <cstring>
 #include <initializer_list>
+#include <map>
 #include <random>
 #include <vector>
 
@@ -298,7 +299,8 @@ Ed2kDownloadCommand::Ed2kDownloadCommand(
       connectionError_(false),
       verifyOffset_(0),
       verifyPartStart_(0),
-      verifyStarted_(false)
+      verifyStarted_(false),
+      recvPos_(0)
 {
   setTimeout(std::chrono::seconds(120));
   // The socket from Ed2kInitiateConnectionCommand may be mid non-blocking
@@ -744,11 +746,15 @@ bool Ed2kDownloadCommand::tryReceiveMessage(
     unsigned char& msgProtocol)
 {
   // Loop: parse buffered frames first, read more from the socket when the
-  // buffer holds no complete frame. Compressed (0xD4) frames are discarded
-  // inside the loop so a following valid frame is parsed immediately.
+  // buffer holds no complete frame. Frames are consumed by advancing the
+  // recvPos_ cursor instead of erasing the vector head — SENDING_PART
+  // frames carry up to 180 KiB of data, and erasing per frame memmoves the
+  // remainder on every message. The consumed prefix is compacted only
+  // when it grows large (or dominates the buffer).
   while (true) {
-    if (recvBuffer_.size() >= ED2K_HEADER_LEN) {
-      uint32_t msgLen = readLe32(recvBuffer_.data());
+    size_t avail = recvBuffer_.size() - recvPos_;
+    if (avail >= ED2K_HEADER_LEN) {
+      uint32_t msgLen = readLe32(recvBuffer_.data() + recvPos_);
 
       if (msgLen > ED2K_MAX_MSG_SIZE || msgLen < 2) {
         // Stream desynchronization — the connection is unusable.
@@ -757,15 +763,14 @@ bool Ed2kDownloadCommand::tryReceiveMessage(
       }
 
       size_t totalNeeded = ED2K_HEADER_LEN + msgLen;
-      if (recvBuffer_.size() >= totalNeeded) {
-        unsigned char protocolByte = recvBuffer_[ED2K_HEADER_LEN];
+      if (avail >= totalNeeded) {
+        unsigned char protocolByte = recvBuffer_[recvPos_ + ED2K_HEADER_LEN];
         if (protocolByte == ED2K_PROT_PACKED) {
           // Compressed frame: we never advertise compression support, so
           // these should not arrive; drop defensively.
           A2_LOG_WARN(fmt("CUID#%" PRId64 " - ED2K: dropping compressed"
                           " frame (%u bytes)", getCuid(), msgLen));
-          recvBuffer_.erase(recvBuffer_.begin(),
-                            recvBuffer_.begin() + totalNeeded);
+          recvPos_ += totalNeeded;
           continue;
         }
         if (protocolByte != ED2K_PROT_EDONKEY &&
@@ -773,30 +778,38 @@ bool Ed2kDownloadCommand::tryReceiveMessage(
           A2_LOG_WARN(fmt("CUID#%" PRId64 " - ED2K: unknown protocol byte"
                           " 0x%02x, dropping %u-byte frame",
                           getCuid(), protocolByte, msgLen));
-          recvBuffer_.erase(recvBuffer_.begin(),
-                            recvBuffer_.begin() + totalNeeded);
+          recvPos_ += totalNeeded;
           continue;
         }
 
         msgProtocol = protocolByte;
-        msgType = recvBuffer_[ED2K_HEADER_LEN + 1];
+        msgType = recvBuffer_[recvPos_ + ED2K_HEADER_LEN + 1];
         size_t payloadLen = msgLen - 2;
         if (payloadLen > 0) {
-          payload.assign(recvBuffer_.data() + ED2K_HEADER_LEN + 2,
-                         recvBuffer_.data() + ED2K_HEADER_LEN + 2 + payloadLen);
+          payload.assign(recvBuffer_.data() + recvPos_ + ED2K_HEADER_LEN + 2,
+                         recvBuffer_.data() + recvPos_ + ED2K_HEADER_LEN + 2 +
+                             payloadLen);
         }
         else {
           payload.clear();
         }
-        recvBuffer_.erase(recvBuffer_.begin(),
-                          recvBuffer_.begin() + totalNeeded);
+        recvPos_ += totalNeeded;
         return true;
       }
     }
 
     // Guard against unbounded buffer growth on garbage input.
-    if (recvBuffer_.size() > ED2K_MAX_MSG_SIZE) {
+    if (recvBuffer_.size() - recvPos_ > ED2K_MAX_MSG_SIZE) {
       throw DL_RETRY_EX("ED2K receive buffer overflow (desync)");
+    }
+
+    // Compact the consumed prefix before appending new data, so the hot
+    // path (one SENDING_PART frame per read) avoids a per-frame memmove.
+    if (recvPos_ > 0 &&
+        (recvPos_ >= 64 * 1024 || recvPos_ * 2 >= recvBuffer_.size())) {
+      recvBuffer_.erase(recvBuffer_.begin(),
+                        recvBuffer_.begin() + static_cast<ptrdiff_t>(recvPos_));
+      recvPos_ = 0;
     }
 
     // Need more data — attempt one non-blocking read.
@@ -1178,6 +1191,7 @@ void Ed2kDownloadCommand::resetPeerState()
 
   sendBuffer_.clear();
   recvBuffer_.clear();
+  recvPos_ = 0;
   inflightBlocks_.clear();
 
   helloSent_ = false;
@@ -3255,9 +3269,12 @@ int Ed2kDownloadCommand::findBestPartToDownload(size_t sourceIndex)
   // An empty bitmap means "availability unknown" — treat as "has all".
   bool hasBitmap = !src.availableParts.empty();
 
-  // Candidates: incomplete, available from this source (if known), and
-  // with at least one byte neither written nor in flight.
-  std::vector<int> candidates;
+  // Rarest-first without a full sort: bucket candidates by source count,
+  // keeping part order within each bucket (equivalent to the previous
+  // stable_sort). This runs once per 180KiB block, so on multi-GB files
+  // it must not allocate a candidate vector and sort it on every call.
+  auto now = global::wallclock();
+  std::map<int, std::pair<int, int>> buckets; // srcCount -> {first, firstStale}
   for (size_t i = 0; i < parts_.size(); ++i) {
     if (parts_[i].completed) {
       continue;
@@ -3271,31 +3288,36 @@ int Ed2kDownloadCommand::findBestPartToDownload(size_t sourceIndex)
         parts_[i].offset + parts_[i].length) {
       continue; // fully written or fully in flight
     }
-    candidates.push_back(static_cast<int>(i));
-  }
-
-  if (candidates.empty()) {
-    return -1;
-  }
-
-  // Rarest-first: prefer parts with the fewest known sources. stable_sort
-  // keeps part order among equals (sequential behavior when availability
-  // is unknown).
-  std::stable_sort(candidates.begin(), candidates.end(),
-                   [this](int a, int b) {
-                     return parts_[a].sources.size() < parts_[b].sources.size();
-                   });
-
-  // Among the rarest, prefer parts not requested recently.
-  auto now = global::wallclock();
-  for (int idx : candidates) {
-    if (parts_[idx].lastRequested.difference(now) >
-        std::chrono::seconds(60)) {
-      return idx;
+    int c = static_cast<int>(parts_[i].sources.size());
+    auto it = buckets.find(c);
+    if (it == buckets.end()) {
+      // Explicitly initialize with -1 ("not set") markers: operator[]
+      // would default-construct {0,0}, which collides with part index 0.
+      it = buckets.emplace(c, std::make_pair(-1, -1)).first;
+    }
+    auto& b = it->second;
+    if (b.first < 0) {
+      b.first = static_cast<int>(i);
+    }
+    if (b.second < 0 &&
+        parts_[i].lastRequested.difference(now) >
+            std::chrono::seconds(60)) {
+      b.second = static_cast<int>(i);
     }
   }
 
-  return candidates[0];
+  if (buckets.empty()) {
+    return -1;
+  }
+
+  // Among the rarest (ascending source count), prefer parts not requested
+  // recently.
+  for (const auto& kv : buckets) {
+    if (kv.second.second >= 0) {
+      return kv.second.second;
+    }
+  }
+  return buckets.begin()->second.first;
 }
 
 } // namespace aria2

@@ -33,6 +33,10 @@
  */
 /* copyright --> */
 #include "AbstractSingleDiskAdaptor.h"
+
+#include <algorithm>
+#include <vector>
+
 #include "File.h"
 #include "AdaptiveFileAllocationIterator.h"
 #include "DiskWriter.h"
@@ -96,10 +100,42 @@ ssize_t AbstractSingleDiskAdaptor::readDataDropCache(unsigned char* data,
 
 void AbstractSingleDiskAdaptor::writeCache(const WrDiskCacheEntry* entry)
 {
-  for (auto& d : entry->getDataSet()) {
-    A2_LOG_DEBUG(fmt("Cache flush goff=%" PRId64 ", len=%lu", d->goff,
-                     static_cast<unsigned long>(d->len)));
-    writeData(d->data + d->offset, d->len, d->goff);
+  // DataCells are sorted by goff. Contiguous cells are merged into a
+  // single write: BT receives 16KiB blocks out of order, so a 4MiB piece
+  // can otherwise fragment into hundreds of tiny per-cell writes, each
+  // one a system call. Merging collapses the run to a single write.
+  const auto& set = entry->getDataSet();
+  auto it = set.begin();
+  while (it != set.end()) {
+    auto runIt = it;
+    int64_t start = (*runIt)->goff;
+    int64_t end = start + static_cast<int64_t>((*runIt)->len);
+    size_t count = 1;
+    ++it;
+    while (it != set.end() && (*it)->goff == end) {
+      end += static_cast<int64_t>((*it)->len);
+      ++it;
+      ++count;
+    }
+    if (count == 1) {
+      // Single-cell run: write directly, no copy.
+      writeData((*runIt)->data + (*runIt)->offset, (*runIt)->len,
+                (*runIt)->goff);
+    }
+    else {
+      // Contiguous run of several cells: copy into one buffer and write
+      // once. Cell data pointers are independent allocations, so the
+      // copy is unavoidable for a single write().
+      std::vector<unsigned char> buf(static_cast<size_t>(end - start));
+      size_t pos = 0;
+      for (auto j = runIt; j != it; ++j) {
+        const auto& d = *j;
+        std::copy(d->data + d->offset, d->data + d->offset + d->len,
+                  buf.begin() + static_cast<ptrdiff_t>(pos));
+        pos += d->len;
+      }
+      writeData(buf.data(), buf.size(), start);
+    }
   }
 }
 

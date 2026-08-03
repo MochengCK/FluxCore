@@ -419,14 +419,11 @@ AppleTLSSession::AppleTLSSession(AppleTLSContext* ctx)
   }
 #endif
 
-  // BEAST
-  (void)SSLSetSessionOption(sslCtx_,
-#if defined(__MAC_10_9)
-                            kSSLSessionOptionSendOneByteRecord,
-#else
-                            (SSLSessionOption)0x4, // kSSLSessionOptionSendOneByteRecord
-#endif
-                            true);
+  // BEAST mitigation (kSSLSessionOptionSendOneByteRecord) is omitted:
+  // it only matters for TLS 1.0 CBC, which this engine never negotiates
+  // (the minimum supported version is TLS 1.1). Forcing one-byte TLS
+  // records here would fragment every SSLWrite into many tiny records,
+  // hurting HTTPS request sending and BT upload throughput.
 // False Start, if available
 #if defined(__MAC_10_9)
   (void)SSLSetSessionOption(sslCtx_, kSSLSessionOptionFalseStart, true);

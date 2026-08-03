@@ -250,9 +250,12 @@ private:
   // --- Pipelined block requests ---
   // Peers answer OP_REQUESTPARTS in order; keep a small number of blocks
   // in flight to hide latency (eMule requests up to 3 blocks per message).
+  // 6 -> 12: deeper pipeline (4 messages in flight) lets high-bandwidth
+  // peers sustain throughput across request/response RTT instead of
+  // idling while waiting for the next SENDING_PART.
   std::deque<BlockRequest> inflightBlocks_;
   static const size_t BLOCKS_PER_MESSAGE = 3; // protocol maximum
-  static const size_t MAX_INFLIGHT_BLOCKS = 6; // 2 messages in flight
+  static const size_t MAX_INFLIGHT_BLOCKS = 12; // 4 messages in flight
   bool useI64Requests_; // >4GB file: use OP_REQUESTPARTS_I64
 
   // --- Message-sent flags ---
@@ -276,6 +279,11 @@ private:
   // --- Persistent I/O buffers ---
   std::vector<unsigned char> sendBuffer_;
   std::vector<unsigned char> recvBuffer_;
+  // Offset of the first unconsumed byte in recvBuffer_. Frames are
+  // consumed by advancing this cursor instead of erasing the vector head
+  // on every message (which memmoves the remainder); the buffer is
+  // compacted only when the consumed prefix grows large.
+  size_t recvPos_;
 
   // --- Whole-file hash verification state ---
   std::unique_ptr<Ed2kMd4> md4PartCtx_;

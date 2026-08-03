@@ -183,6 +183,23 @@ int DownloadEngine::run(bool oneshot)
     if (!commands_.empty()) {
       waitData();
     }
+    else {
+      // No executable commands queued (all tasks paused, BT seeding, or
+      // downloads waiting on DNS). Routine commands below keep
+      // re-queueing themselves, so without blocking here the event loop
+      // would spin at 100% CPU. A short poll keeps timer semantics
+      // (routine commands are second-granularity) while letting the
+      // kernel sleep between iterations.
+      struct timeval tv;
+      if (noWait_) {
+        tv.tv_sec = tv.tv_usec = 0;
+      }
+      else {
+        tv.tv_sec = 0;
+        tv.tv_usec = 10000; // 10ms
+      }
+      eventPoll_->poll(tv);
+    }
     noWait_ = false;
     global::wallclock().reset();
     calculateStatistics();

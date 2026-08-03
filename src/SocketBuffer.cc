@@ -134,7 +134,9 @@ ssize_t SocketBuffer::send()
   while (!bufq_.empty()) {
     size_t num;
     size_t bufqlen = bufq_.size();
-    ssize_t amount = 24_k;
+    // 24KB -> 64KB: 单次 writev 覆盖更大的请求数据，
+    // 减少大请求（多 header / 大 cookie）的发送循环次数
+    ssize_t amount = 64_k;
     ssize_t firstlen = bufq_.front()->getLength() - offset_;
     amount -= firstlen;
     iov[0].A2IOVEC_BASE = reinterpret_cast<char*>(

@@ -37,6 +37,7 @@
 #include <cassert>
 #include <algorithm>
 #include <map>
+#include <vector>
 
 #include "DefaultDiskWriter.h"
 #include "message.h"
@@ -412,10 +413,38 @@ ssize_t MultiDiskAdaptor::readData(unsigned char* data, size_t len,
 
 void MultiDiskAdaptor::writeCache(const WrDiskCacheEntry* entry)
 {
-  for (auto& d : entry->getDataSet()) {
-    A2_LOG_DEBUG(fmt("Cache flush goff=%" PRId64 ", len=%lu", d->goff,
-                     static_cast<unsigned long>(d->len)));
-    writeData(d->data + d->offset, d->len, d->goff);
+  // Same contiguous-run merging as AbstractSingleDiskAdaptor::writeCache:
+  // out-of-order BT blocks fragment the cache into tiny cells; collapsing
+  // each contiguous run into one writeData call cuts system calls
+  // dramatically. writeData() itself handles file-boundary splits.
+  const auto& set = entry->getDataSet();
+  auto it = set.begin();
+  while (it != set.end()) {
+    auto runIt = it;
+    int64_t start = (*runIt)->goff;
+    int64_t end = start + static_cast<int64_t>((*runIt)->len);
+    size_t count = 1;
+    ++it;
+    while (it != set.end() && (*it)->goff == end) {
+      end += static_cast<int64_t>((*it)->len);
+      ++it;
+      ++count;
+    }
+    if (count == 1) {
+      writeData((*runIt)->data + (*runIt)->offset, (*runIt)->len,
+                (*runIt)->goff);
+    }
+    else {
+      std::vector<unsigned char> buf(static_cast<size_t>(end - start));
+      size_t pos = 0;
+      for (auto j = runIt; j != it; ++j) {
+        const auto& d = *j;
+        std::copy(d->data + d->offset, d->data + d->offset + d->len,
+                  buf.begin() + static_cast<ptrdiff_t>(pos));
+        pos += d->len;
+      }
+      writeData(buf.data(), buf.size(), start);
+    }
   }
 }
 

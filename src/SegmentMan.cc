@@ -204,11 +204,24 @@ std::shared_ptr<Segment> SegmentMan::getSegment(cuid_t cuid,
                                                 size_t minSplitSize)
 {
   // Use dynamically calculated segment size
-  size_t dynamicSize = static_cast<size_t>(getDynamicSegmentSize());
-  
-  // Use the larger of specified minSplitSize or dynamic size
-  size_t actualSize = std::max(minSplitSize, dynamicSize);
-  
+  int64_t dynamicSize = getDynamicSegmentSize();
+
+  // Tail acceleration (progress > 85%): honor the small dynamic segment
+  // size instead of clamping it up to minSplitSize. Otherwise the
+  // 128KiB-256KiB endgame thresholds are dead code whenever
+  // min-split-size (default 4MiB) exceeds them, and the tail of a large
+  // file finishes with reduced concurrency (only one connection can
+  // advance sequentially through the remainder).
+  double progress = getDownloadProgress();
+  size_t actualSize;
+  if (progress > PREEMPTION_PROGRESS_THRESHOLD) {
+    actualSize = static_cast<size_t>(dynamicSize);
+  }
+  else {
+    // Normal mode: never use segments smaller than minSplitSize.
+    actualSize = std::max(minSplitSize, static_cast<size_t>(dynamicSize));
+  }
+
   std::shared_ptr<Piece> piece = pieceStorage_->getMissingPiece(
       actualSize, ignoreBitfield_.getFilterBitfield(),
       ignoreBitfield_.getBitfieldLength(), cuid);
