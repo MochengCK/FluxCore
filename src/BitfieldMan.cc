@@ -370,8 +370,9 @@ bool getGeomMissingUnusedIndex(size_t& index, int32_t minSplitSize,
       end *= base;
     }
   }
+  // Fallback full scan from 0 (startIndex 0 = original semantics).
   return getSparseMissingUnusedIndex(index, minSplitSize, bitfield, useBitfield,
-                                     blockLength, blocks);
+                                     blockLength, blocks, 0);
 }
 } // namespace
 
