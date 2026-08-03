@@ -180,10 +180,11 @@ void applySocketBufferSize(sock_t fd)
 {
   auto recvBufSize = SocketCore::getSocketRecvBufferSize();
   
-  // 如果未配置，使用默认值 256KB（适合高速网络）
-  // 这对于 HTTPS 下载特别重要，可以减少 TLS 层的开销
+  // 如果未配置，使用默认值 1MB（适合高速长肥管道网络）
+  // 较大的接收缓冲提升高带宽 × 高延迟（BDP 大）场景下的 TCP 吞吐，
+  // 对 HTTPS 下载尤为重要，可减少 TLS 层因内核缓冲不足造成的停顿
   if (recvBufSize == 0) {
-    recvBufSize = 256 * 1024;  // 256KB
+    recvBufSize = 1024 * 1024;  // 1MB
   }
 
   // 设置接收缓冲区

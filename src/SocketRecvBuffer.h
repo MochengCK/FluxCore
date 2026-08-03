@@ -69,7 +69,10 @@ public:
   bool bufferEmpty() const { return pos_ == last_; }
 
 private:
-  std::array<unsigned char, 64_k> buf_;
+  // 64KB -> 256KB: 每次事件循环 read 更多的数据，减少 read 系统调用
+  // 与循环迭代次数，提升高带宽（50MB/s+）下的下载吞吐与 CPU 效率。
+  // 配合内核 SO_RCVBUF（1MB）使单次 recv 能取走更多已到达的数据。
+  std::array<unsigned char, 256_k> buf_;
   std::shared_ptr<SocketCore> socket_;
   unsigned char* pos_;
   unsigned char* last_;
