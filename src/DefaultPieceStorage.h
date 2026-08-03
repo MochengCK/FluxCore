@@ -241,6 +241,8 @@ public:
 
   virtual void flushWrDiskCacheEntry(bool releaseEntries) CXX11_OVERRIDE;
 
+  virtual void flushCompletedWrDiskCache() CXX11_OVERRIDE;
+
   virtual int32_t getPieceLength(size_t index) CXX11_OVERRIDE;
 
   virtual void advertisePiece(cuid_t cuid, size_t index,

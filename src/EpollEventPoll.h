@@ -89,6 +89,14 @@ private:
 
   static const size_t EPOLL_EVENTS_MAX = 1024;
 
+#ifdef ENABLE_ASYNC_DNS
+  // Throttle the per-poll DNS socket re-registration. c-ares socket
+  // state changes at most a few times per query, while the event loop
+  // can iterate thousands of times per second under load; re-registering
+  // every iteration issued 2 epoll_ctl calls per resolver for nothing.
+  std::chrono::steady_clock::time_point lastDnsSync_;
+#endif // ENABLE_ASYNC_DNS
+
   bool addEvents(sock_t socket, const KEvent& event);
 
   bool deleteEvents(sock_t socket, const KEvent& event);

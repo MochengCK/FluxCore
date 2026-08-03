@@ -797,10 +797,21 @@ std::string AbstractCommand::resolveHostname(std::vector<std::string>& addrs,
 #ifdef ENABLE_ASYNC_DNS
   if (getOption()->getAsBool(PREF_ASYNC_DNS)) {
     if (!asyncNameResolverMan_->started()) {
+      if (!e_->beginDnsQuery(hostname)) {
+        // A concurrent command is already resolving this host. Skip the
+        // duplicate query and retry next tick — by then the first result
+        // will have been written into the DNSCache and this connection
+        // proceeds with a cache hit instead of its own c-ares query.
+        A2_LOG_DEBUG(fmt("CUID#%" PRId64 " - DNS query for %s already in "
+                         "flight, deferring to cache",
+                         getCuid(), hostname.c_str()));
+        return A2STR::NIL;
+      }
       asyncNameResolverMan_->startAsync(hostname, e_, this);
     }
     switch (asyncNameResolverMan_->getStatus()) {
     case -1:
+      e_->endDnsQuery(hostname);
       if (!isProxyRequest(req_->getProtocol(), getOption())) {
         e_->getRequestGroupMan()
             ->getOrCreateServerStat(req_->getHost(), req_->getProtocol())
@@ -816,6 +827,7 @@ std::string AbstractCommand::resolveHostname(std::vector<std::string>& addrs,
     case 1:
       asyncNameResolverMan_->getResolvedAddress(addrs);
       if (addrs.empty()) {
+        e_->endDnsQuery(hostname);
         throw DL_ABORT_EX2(fmt(MSG_NAME_RESOLUTION_FAILED, getCuid(),
                                hostname.c_str(), "No address returned"),
                            error_code::NAME_RESOLVE_ERROR);
@@ -838,6 +850,9 @@ std::string AbstractCommand::resolveHostname(std::vector<std::string>& addrs,
   for (const auto& addr : addrs) {
     e_->cacheIPAddress(hostname, addr, port);
   }
+#ifdef ENABLE_ASYNC_DNS
+  e_->endDnsQuery(hostname);
+#endif // ENABLE_ASYNC_DNS
   ipaddr = e_->findCachedIPAddress(hostname, port);
   return ipaddr;
 }

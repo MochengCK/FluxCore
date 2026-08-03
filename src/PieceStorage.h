@@ -236,6 +236,13 @@ public:
   // and optionally releases the associated cache entries.
   virtual void flushWrDiskCacheEntry(bool releaseEntries) = 0;
 
+  // Flushes only the cache entries of pieces that are fully downloaded.
+  // Used by the periodic control-file save: only completed pieces must
+  // be durable for the control file to stay truthful after a crash,
+  // while in-progress caches keep aggregating without a periodic
+  // flush+fsync burst stalling the event loop.
+  virtual void flushCompletedWrDiskCache() = 0;
+
   virtual int32_t getPieceLength(size_t index) = 0;
 
   /**

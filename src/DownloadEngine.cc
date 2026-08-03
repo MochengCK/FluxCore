@@ -625,6 +625,26 @@ void DownloadEngine::removeCachedIPAddress(const std::string& hostname,
   dnsCache_->remove(hostname, port);
 }
 
+#ifdef ENABLE_ASYNC_DNS
+bool DownloadEngine::beginDnsQuery(const std::string& hostname)
+{
+  auto now = std::chrono::steady_clock::now();
+  auto it = inflightDns_.find(hostname);
+  if (it != inflightDns_.end() &&
+      now - it->second < std::chrono::seconds(10)) {
+    // Another connection is already resolving this host.
+    return false;
+  }
+  inflightDns_[hostname] = now;
+  return true;
+}
+
+void DownloadEngine::endDnsQuery(const std::string& hostname)
+{
+  inflightDns_.erase(hostname);
+}
+#endif // ENABLE_ASYNC_DNS
+
 void DownloadEngine::setAuthConfigFactory(
     std::unique_ptr<AuthConfigFactory> factory)
 {

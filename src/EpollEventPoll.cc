@@ -84,6 +84,10 @@ struct epoll_event EpollEventPoll::KSocketEntry::getEvents()
 EpollEventPoll::EpollEventPoll()
     : epEventsSize_(EPOLL_EVENTS_MAX),
       epEvents_(make_unique<struct epoll_event[]>(epEventsSize_))
+#ifdef ENABLE_ASYNC_DNS
+      ,
+      lastDnsSync_(std::chrono::steady_clock::now())
+#endif // ENABLE_ASYNC_DNS
 {
   epfd_ = epoll_create(EPOLL_EVENTS_MAX);
 }
@@ -109,8 +113,11 @@ void EpollEventPoll::poll(const struct timeval& tv)
   int timeout = tv.tv_sec * 1000 + tv.tv_usec / 1000;
 
   int res;
-  while ((res = epoll_wait(epfd_, epEvents_.get(), EPOLL_EVENTS_MAX,
-                           timeout)) == -1 &&
+  // Pass the current array size (not the constant) so epoll_wait can
+  // deliver as many events as the buffer actually holds once it has
+  // grown beyond EPOLL_EVENTS_MAX.
+  while ((res = epoll_wait(epfd_, epEvents_.get(),
+                           static_cast<int>(epEventsSize_), timeout)) == -1 &&
          errno == EINTR)
     ;
 
@@ -126,15 +133,21 @@ void EpollEventPoll::poll(const struct timeval& tv)
         fmt("epoll_wait error: %s", util::safeStrerror(errNum).c_str()));
   }
 #ifdef ENABLE_ASYNC_DNS
-  // It turns out that we have to call ares_process_fd before ares's
-  // own timeout and ares may create new sockets or closes socket in
-  // their API. So we call ares_process_fd for all ares_channel and
-  // re-register their sockets.
-  for (auto& i : nameResolverEntries_) {
-    auto& ent = i.second;
-    ent.processTimeout();
-    ent.removeSocketEvents(this);
-    ent.addSocketEvents(this);
+  // Re-registering DNS sockets on every poll is wasteful: c-ares socket
+  // state changes at most a few times per query, while the event loop
+  // can iterate thousands of times per second under load (2 epoll_ctl
+  // calls per resolver per iteration). Throttle the sync to every 100ms
+  // — far below ares's 5s query timeout, so timeout processing and new
+  // socket registration stay timely.
+  auto now = std::chrono::steady_clock::now();
+  if (now - lastDnsSync_ >= std::chrono::milliseconds(100)) {
+    lastDnsSync_ = now;
+    for (auto& i : nameResolverEntries_) {
+      auto& ent = i.second;
+      ent.processTimeout();
+      ent.removeSocketEvents(this);
+      ent.addSocketEvents(this);
+    }
   }
 #endif // ENABLE_ASYNC_DNS
 

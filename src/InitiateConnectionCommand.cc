@@ -55,6 +55,7 @@
 #include "ConnectCommand.h"
 #include <algorithm>
 #include <chrono>
+#include <map>
 #include <thread>
 #include <future>
 #include <vector>
@@ -71,6 +72,22 @@ struct ConnectionProbeResult {
   ConnectionProbeResult(const std::string& ip, int64_t latency, bool succ)
     : ipaddr(ip), latencyMs(latency), success(succ) {}
 };
+
+namespace {
+// Probe-result cache keyed by "hostname:port". The first connection to a
+// multi-IP host pays one round of parallel probing; every subsequent
+// connection reuses the winner. Without this, each new segment
+// connection spawned N std::async threads and blocked the event loop for
+// up to the full probe timeout waiting on future.get(), and the probes
+// were thrown away immediately (the chosen IP was re-connected from
+// scratch).
+struct FastestIpEntry {
+  std::string ipaddr;
+  std::chrono::steady_clock::time_point cachedAt;
+};
+std::map<std::string, FastestIpEntry> fastestIpCache;
+constexpr auto FASTEST_IP_TTL = std::chrono::seconds(60);
+} // namespace
 
 // IP 合法性过滤：过滤掉私有地址、保留地址等
 static bool isValidPublicIP(const std::string& ipaddr)
@@ -258,14 +275,28 @@ bool InitiateConnectionCommand::executeInternal()
   
   // 步骤 3: 快速连接探测（并发）
   std::string bestIpaddr;
-  
-  if (validAddrs.size() == 1) {
+  const std::string cacheKey = hostname + ":" + util::uitos(port);
+  const auto now = std::chrono::steady_clock::now();
+
+  // 复用此前的探测结果（60s TTL），避免每个新连接都启动线程探测并
+  // 阻塞事件循环等待 future.get()。
+  auto cachedIt = fastestIpCache.find(cacheKey);
+  if (cachedIt != fastestIpCache.end() &&
+      now - cachedIt->second.cachedAt < FASTEST_IP_TTL &&
+      std::find(validAddrs.begin(), validAddrs.end(),
+                cachedIt->second.ipaddr) != validAddrs.end()) {
+    bestIpaddr = cachedIt->second.ipaddr;
+    A2_LOG_INFO(fmt("CUID#%" PRId64 " - Reusing cached fastest IP %s for %s",
+                    getCuid(), bestIpaddr.c_str(), hostname.c_str()));
+  }
+  else if (validAddrs.size() == 1) {
     // 只有一个 IP，直接使用
     bestIpaddr = validAddrs[0];
     A2_LOG_INFO(fmt("CUID#%" PRId64 " - Only one IP available: %s",
                     getCuid(), bestIpaddr.c_str()));
-  } else {
-    // 多个 IP，进行并发探测
+  }
+  else {
+    // 多个 IP，进行并发探测（仅首次；后续连接复用缓存结果）
     A2_LOG_INFO(fmt("CUID#%" PRId64 " - Probing %zu IPs concurrently",
                     getCuid(), validAddrs.size()));
     
@@ -273,7 +304,7 @@ bool InitiateConnectionCommand::executeInternal()
     
     // 启动并发探测
     for (const auto& addr : validAddrs) {
-      futures.push_back(std::async(std::launch::async, probeConnection, addr, port, 800));
+      futures.push_back(std::async(std::launch::async, probeConnection, addr, port, 500));
     }
     
     // 收集结果
@@ -314,6 +345,9 @@ bool InitiateConnectionCommand::executeInternal()
                       getCuid(), bestIpaddr.c_str()));
     }
   }
+
+  // 记住本次选择，供同 host 的后续连接复用
+  fastestIpCache[cacheKey] = {bestIpaddr, now};
   
   // 步骤 5: 使用选定的最快 IP 进行正式下载
   try {
@@ -326,6 +360,9 @@ bool InitiateConnectionCommand::executeInternal()
   catch (RecoverableException& ex) {
     // Catch exception and retry another address.
     // See also AbstractCommand::checkIfConnectionEstablished
+
+    // Invalidate the probe cache so a failed IP is not reused.
+    fastestIpCache.erase(cacheKey);
 
     // TODO ipaddr might not be used if pooled socket was found.
     getDownloadEngine()->markBadIPAddress(hostname, bestIpaddr, port);

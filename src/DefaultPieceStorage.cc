@@ -709,6 +709,23 @@ void DefaultPieceStorage::flushWrDiskCacheEntry(bool releaseEntries)
   }
 }
 
+void DefaultPieceStorage::flushCompletedWrDiskCache()
+{
+  if (!wrDiskCache_) {
+    return;
+  }
+  // Periodic save path: only fully-downloaded pieces must reach disk so
+  // the control file stays truthful after a crash. In-progress piece
+  // caches keep aggregating in memory, avoiding a periodic full flush +
+  // fsync burst that stalls the event loop during active downloads.
+  for (auto& piece : usedPieces_) {
+    auto ce = piece->getWrDiskCacheEntry();
+    if (ce && piece->getCompletedLength() == piece->getLength()) {
+      piece->flushWrCache(wrDiskCache_);
+    }
+  }
+}
+
 int32_t DefaultPieceStorage::getPieceLength(size_t index)
 {
   return bitfieldMan_->getBlockLength(index);

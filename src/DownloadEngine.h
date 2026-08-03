@@ -42,6 +42,7 @@
 #include <map>
 #include <vector>
 #include <memory>
+#include <chrono>
 
 #include "a2netcompat.h"
 #include "TimerA2.h"
@@ -140,6 +141,11 @@ private:
   CUIDCounter cuidCounter_;
 
   std::unique_ptr<DNSCache> dnsCache_;
+
+#ifdef ENABLE_ASYNC_DNS
+  // hostname -> query start time for queries currently in flight.
+  std::map<std::string, std::chrono::steady_clock::time_point> inflightDns_;
+#endif // ENABLE_ASYNC_DNS
 
   std::unique_ptr<AuthConfigFactory> authConfigFactory_;
 
@@ -320,6 +326,16 @@ public:
                         uint16_t port);
 
   void removeCachedIPAddress(const std::string& hostname, uint16_t port);
+
+#ifdef ENABLE_ASYNC_DNS
+  // In-flight DNS query coalescing. The first connection resolving a
+  // hostname performs the query; concurrent connections for the same
+  // host skip their own duplicate query and instead wait for the first
+  // result to be written into the DNSCache (AbstractCommand retries the
+  // lookup next tick). Entries auto-expire after 10s as a safety net.
+  bool beginDnsQuery(const std::string& hostname);
+  void endDnsQuery(const std::string& hostname);
+#endif // ENABLE_ASYNC_DNS
 
   void setAuthConfigFactory(std::unique_ptr<AuthConfigFactory> factory);
 

@@ -1427,7 +1427,10 @@ void RequestGroup::saveControlFile() const
 {
   if (saveControlFile_ && progressInfoFile_) {
     if (pieceStorage_) {
-      pieceStorage_->flushWrDiskCacheEntry(false);
+      // Only completed pieces need to be durable before the control file
+      // is written — in-progress piece caches keep aggregating (they are
+      // not marked complete, so a crash leaves them consistent).
+      pieceStorage_->flushCompletedWrDiskCache();
       pieceStorage_->getDiskAdaptor()->flushOSBuffers();
     }
     progressInfoFile_->save();
