@@ -44,6 +44,7 @@
 #include "Logger.h"
 #include "BtHandshakeMessage.h"
 #include "SocketCore.h"
+#include "SocketLike.h"
 #include "a2netcompat.h"
 #include "DHKeyExchange.h"
 #include "ARC4Encryptor.h"
@@ -82,7 +83,7 @@ MSEHandshake::MSEHandshake(cuid_t cuid,
       wantRead_(false),
       option_(op),
       rbufLength_(0),
-      socketBuffer_(socket),
+      socketBuffer_(std::make_shared<TcpSocketLike>(socket)),
       negotiatedCryptoType_(CRYPTO_NONE),
       initiator_(true),
       markerIndex_(0),

@@ -52,6 +52,7 @@
 #include "DlRetryEx.h"
 #include "DlAbortEx.h"
 #include "SocketCore.h"
+#include "SocketLike.h"
 #include "A2STR.h"
 #include "fmt.h"
 #include "AuthConfig.h"
@@ -71,7 +72,7 @@ FtpConnection::FtpConnection(cuid_t cuid,
       req_(req),
       authConfig_(authConfig),
       option_(op),
-      socketBuffer_(socket),
+      socketBuffer_(std::make_shared<TcpSocketLike>(socket)),
       baseWorkingDir_("/")
 {
 }

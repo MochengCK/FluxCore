@@ -38,6 +38,7 @@
 
 #include "HttpHeader.h"
 #include "SocketCore.h"
+#include "SocketLike.h"
 #include "HttpHeaderProcessor.h"
 #include "DlAbortEx.h"
 #include "message.h"
@@ -63,7 +64,7 @@ std::unique_ptr<util::security::HMAC> HttpServer::hmac_;
 HttpServer::HttpServer(const std::shared_ptr<SocketCore>& socket)
     : socket_(socket),
       socketRecvBuffer_(std::make_shared<SocketRecvBuffer>(socket_)),
-      socketBuffer_(socket),
+      socketBuffer_(std::make_shared<TcpSocketLike>(socket)),
       headerProcessor_(
           make_unique<HttpHeaderProcessor>(HttpHeaderProcessor::SERVER_PARSER)),
       lastContentLength_(0),
