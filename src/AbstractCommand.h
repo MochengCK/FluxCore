@@ -73,6 +73,12 @@ private:
 
 #ifdef ENABLE_ASYNC_DNS
   std::unique_ptr<AsyncNameResolverMan> asyncNameResolverMan_;
+  // Hostname this command registered via DownloadEngine::beginDnsQuery().
+  // Tracked so the destructor can release the in-flight slot if the
+  // command is destroyed while the async query is still pending —
+  // otherwise the entry leaks and every other connection to this host
+  // defers DNS resolution until the 10s stale TTL expires.
+  std::string inflightDnsHost_;
 #endif // ENABLE_ASYNC_DNS
 
   RequestGroup* requestGroup_;

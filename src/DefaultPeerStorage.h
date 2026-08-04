@@ -82,9 +82,10 @@ private:
   std::map<std::string, uint32_t> attemptStats_;
   std::map<std::string, uint32_t> failStats_;
   std::map<std::string, uint32_t> tcpFailStats_;
-  std::map<std::string, uint32_t> utpFailStats_;
-  std::map<std::string, uint32_t> udpFailStats_;
   std::string peerKey(const std::string& ipaddr, uint16_t port) const;
+  // Drop all stats for a peer that is being evicted from every list, so
+  // the maps stay bounded by the peers we actually track.
+  void erasePeerStats(const std::string& ipaddr, uint16_t port);
 
 public:
   DefaultPeerStorage();
@@ -123,6 +124,8 @@ public:
   uint32_t getAttemptCount(const std::string& ipaddr, uint16_t port) const;
   uint32_t getFailCount(const std::string& ipaddr, uint16_t port) const;
   uint32_t getTcpFailCount(const std::string& ipaddr, uint16_t port) const;
+  // uTP/UDP transports are not implemented by this engine, so these
+  // always return 0. Kept only to preserve the RPC getPeers schema.
   uint32_t getUtpFailCount(const std::string& ipaddr, uint16_t port) const;
   uint32_t getUdpFailCount(const std::string& ipaddr, uint16_t port) const;
   

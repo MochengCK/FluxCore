@@ -249,7 +249,9 @@ std::string ipFromWire(const unsigned char* p)
   // In FOUND_SOURCES / source-exchange entries the 4 address bytes are the
   // dotted-quad octets in order: b0.b1.b2.b3.
   char buf[16];
-  snprintf(buf, sizeof(buf), "%u.%u.%u.%u", p[0], p[1], p[2], p[3]);
+  snprintf(buf, sizeof(buf), "%u.%u.%u.%u", static_cast<unsigned>(p[0]),
+           static_cast<unsigned>(p[1]), static_cast<unsigned>(p[2]),
+           static_cast<unsigned>(p[3]));
   return std::string(buf);
 }
 
@@ -2086,18 +2088,29 @@ bool Ed2kDownloadCommand::fillBlockPipeline()
 }
 
 // Return the lowest offset in [from, limit) that is neither written nor
-// already in flight. writtenRanges_ and inflightBlocks_ are both sorted.
+// already in flight. writtenRanges_ is sorted and non-overlapping, so the
+// written set is probed with a binary search instead of a full rescan;
+// in-flight blocks are few (<= MAX_INFLIGHT_BLOCKS) and scanned linearly.
 int64_t Ed2kDownloadCommand::nextFreeOffset(int64_t from, int64_t limit) const
 {
   int64_t next = from;
+  // First written range whose end is past `next`.
+  auto rit = std::upper_bound(writtenRanges_.begin(), writtenRanges_.end(),
+                              next,
+                              [](int64_t v, const Range& r) {
+                                return v < r.end;
+                              });
   bool moved = true;
   while (moved && next < limit) {
     moved = false;
-    for (const auto& r : writtenRanges_) {
-      if (r.start <= next && next < r.end) {
-        next = r.end;
-        moved = true;
-      }
+    // Skip ranges that ended at or before `next` (in-flight blocks may
+    // have advanced it past them), then extend through the covering one.
+    while (rit != writtenRanges_.end() && rit->end <= next) {
+      ++rit;
+    }
+    if (rit != writtenRanges_.end() && rit->start <= next) {
+      next = rit->end;
+      moved = true;
     }
     for (const auto& b : inflightBlocks_) {
       if (b.start <= next && next < b.end) {
@@ -2241,7 +2254,7 @@ bool Ed2kDownloadCommand::handleSendingPart(
       throw DL_ABORT_EX2("ED2K failed to write block to disk",
                          error_code::FILE_IO_ERROR);
     }
-    recordWrittenRange(dataStart, dataEnd);
+    size_t mergedRangeIdx = recordWrittenRange(dataStart, dataEnd);
     downloadedLength_ += static_cast<int64_t>(dataLen);
 
     // Proof-by-transfer: this source demonstrably has the part.
@@ -2261,7 +2274,7 @@ bool Ed2kDownloadCommand::handleSendingPart(
           srcs.push_back(currentSourceIndex_);
         }
       }
-      updatePartCompletion();
+      updatePartCompletion(mergedRangeIdx);
     }
 
     // Feed download-speed statistics.
@@ -2305,7 +2318,7 @@ bool Ed2kDownloadCommand::writeBlockToDisk(int64_t offset,
   }
 }
 
-void Ed2kDownloadCommand::recordWrittenRange(int64_t start, int64_t end)
+size_t Ed2kDownloadCommand::recordWrittenRange(int64_t start, int64_t end)
 {
   // Insert [start, end) into writtenRanges_, merging overlapping or
   // adjacent entries so the set stays sorted and non-overlapping.
@@ -2352,6 +2365,7 @@ void Ed2kDownloadCommand::recordWrittenRange(int64_t start, int64_t end)
       }
     }
   }
+  return i;
 }
 
 int64_t Ed2kDownloadCommand::prefixLength() const
@@ -2390,6 +2404,8 @@ bool Ed2kDownloadCommand::verifyHash()
   if (!verifyStarted_) {
     md4PartCtx_ = make_unique<Ed2kMd4>();
     partHashes_.clear();
+    // Allocate the read buffer once; it is reused on every tick below.
+    verifyBuf_.resize(VERIFY_CHUNK);
     verifyOffset_ = 0;
     verifyPartStart_ = 0;
     verifyStarted_ = true;
@@ -2411,8 +2427,7 @@ bool Ed2kDownloadCommand::verifyHash()
   size_t toRead = static_cast<size_t>(std::min(chunkSize, remaining));
 
   if (toRead > 0) {
-    std::vector<unsigned char> buf(toRead);
-    ssize_t n = ps->getDiskAdaptor()->readData(buf.data(), toRead,
+    ssize_t n = ps->getDiskAdaptor()->readData(verifyBuf_.data(), toRead,
                                                verifyOffset_);
     if (n <= 0) {
       throw DL_ABORT_EX2("ED2K: failed to read file for verification",
@@ -2426,7 +2441,7 @@ bool Ed2kDownloadCommand::verifyHash()
       size_t avail = static_cast<size_t>(
           std::min(static_cast<int64_t>(n) - static_cast<int64_t>(consumed),
                    partEnd - verifyOffset_));
-      md4PartCtx_->update(buf.data() + consumed, avail);
+      md4PartCtx_->update(verifyBuf_.data() + consumed, avail);
       verifyOffset_ += static_cast<int64_t>(avail);
       consumed += avail;
 
@@ -2708,6 +2723,15 @@ void Ed2kDownloadCommand::checkServerSourceRefresh()
 
 void Ed2kDownloadCommand::updateContextAttribute()
 {
+  // Called on every engine tick from execute(). Building the snapshot
+  // costs O(sources x parts) (counting availableParts per source), which
+  // is far too expensive to do per tick on multi-GB files — refresh at
+  // most once per second; RPC readers see at most 1s-stale data.
+  if (contextAttrTimer_.difference() < std::chrono::seconds(1)) {
+    return;
+  }
+  contextAttrTimer_.reset();
+
   auto dc = getDownloadContext();
   if (!dc) return;
 
@@ -3200,16 +3224,18 @@ void Ed2kDownloadCommand::initParts()
                   getCuid(), parts_.size(), partSize_));
 }
 
-void Ed2kDownloadCommand::updatePartCompletion()
+void Ed2kDownloadCommand::updatePartCompletion(size_t rangeIndex)
 {
-  if (parts_.empty() || writtenRanges_.empty()) {
+  if (parts_.empty() || rangeIndex >= writtenRanges_.size()) {
     return;
   }
 
-  // Only inspect parts overlapping the most recently extended range —
-  // scanning the whole table per 180KB block is too expensive for
-  // multi-GB files.
-  const Range& last = writtenRanges_.back();
+  // Only inspect parts overlapping the range that just changed — scanning
+  // the whole table per 180KB block is too expensive for multi-GB files.
+  // NOTE: this must be the *merged* range returned by recordWrittenRange();
+  // a gap-filling merge can land in the middle of writtenRanges_, so using
+  // back() here previously left some parts permanently uncompleted.
+  const Range& last = writtenRanges_[rangeIndex];
   size_t firstPart = partIndexForOffset(last.start);
   size_t lastPart = partIndexForOffset(std::max<int64_t>(last.end - 1, 0));
   for (size_t i = firstPart; i <= lastPart && i < parts_.size(); ++i) {

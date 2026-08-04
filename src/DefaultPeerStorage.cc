@@ -74,9 +74,15 @@ DefaultPeerStorage::~DefaultPeerStorage()
 
 std::string DefaultPeerStorage::peerKey(const std::string& ipaddr, uint16_t port) const
 {
-  std::ostringstream oss;
-  oss << ipaddr << ":" << port;
-  return oss.str();
+  return fmt("%s:%u", ipaddr.c_str(), port);
+}
+
+void DefaultPeerStorage::erasePeerStats(const std::string& ipaddr, uint16_t port)
+{
+  const auto key = peerKey(ipaddr, port);
+  attemptStats_.erase(key);
+  failStats_.erase(key);
+  tcpFailStats_.erase(key);
 }
 
 uint32_t DefaultPeerStorage::getAttemptCount(const std::string& ipaddr, uint16_t port) const
@@ -100,18 +106,16 @@ uint32_t DefaultPeerStorage::getTcpFailCount(const std::string& ipaddr, uint16_t
   return it == tcpFailStats_.end() ? 0 : it->second;
 }
 
-uint32_t DefaultPeerStorage::getUtpFailCount(const std::string& ipaddr, uint16_t port) const
+uint32_t DefaultPeerStorage::getUtpFailCount(const std::string&, uint16_t) const
 {
-  const auto key = peerKey(ipaddr, port);
-  auto it = utpFailStats_.find(key);
-  return it == utpFailStats_.end() ? 0 : it->second;
+  // uTP is not implemented by this engine; always 0 (RPC schema compat).
+  return 0;
 }
 
-uint32_t DefaultPeerStorage::getUdpFailCount(const std::string& ipaddr, uint16_t port) const
+uint32_t DefaultPeerStorage::getUdpFailCount(const std::string&, uint16_t) const
 {
-  const auto key = peerKey(ipaddr, port);
-  auto it = udpFailStats_.find(key);
-  return it == udpFailStats_.end() ? 0 : it->second;
+  // UDP transport is not implemented by this engine; always 0.
+  return 0;
 }
 
 size_t DefaultPeerStorage::countAllPeer() const
@@ -288,6 +292,9 @@ void DefaultPeerStorage::addDroppedPeer(const std::shared_ptr<Peer>& peer)
   }
   droppedPeers_.push_front(peer);
   if (droppedPeers_.size() > 50) {
+    // The evicted peer is gone from every list — drop its stats too.
+    const auto& evicted = droppedPeers_.back();
+    erasePeerStats(evicted->getIPAddress(), evicted->getOrigPort());
     droppedPeers_.pop_back();
   }
 }
@@ -350,6 +357,9 @@ void DefaultPeerStorage::deleteUnusedPeer(size_t delSize)
   for (; delSize > 0 && !unusedPeers_.empty(); --delSize) {
     auto& peer = unusedPeers_.back();
     onErasingPeer(peer);
+    // Permanently evicted without ever being used — its stats are no
+    // longer reachable via RPC; drop them to keep the maps bounded.
+    erasePeerStats(peer->getIPAddress(), peer->getOrigPort());
     A2_LOG_DEBUG(fmt("Remove peer %s:%u", peer->getIPAddress().c_str(),
                      peer->getOrigPort()));
     unusedPeers_.pop_back();

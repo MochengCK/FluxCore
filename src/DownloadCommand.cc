@@ -109,6 +109,10 @@ DownloadCommand::~DownloadCommand()
 {
   peerStat_->downloadStop();
   getSegmentMan()->updateFastestPeerStat(peerStat_);
+  // Drop this connection's dynamic-segmentation stats so dead
+  // connections are neither leaked nor counted as active when sizing
+  // new segments.
+  getSegmentMan()->removeConnectionStats(getCuid());
 }
 
 namespace {

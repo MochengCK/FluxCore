@@ -575,6 +575,11 @@ void SegmentMan::updateConnectionStats(cuid_t cuid, int64_t downloadedBytes)
   stats.lastUpdateTime = now;
 }
 
+void SegmentMan::removeConnectionStats(cuid_t cuid)
+{
+  connectionStats_.erase(cuid);
+}
+
 int64_t SegmentMan::getDynamicSegmentSize() const
 {
   int64_t totalRemaining = getTotalLength() - getDownloadLength();

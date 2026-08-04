@@ -288,9 +288,16 @@ private:
   // --- Whole-file hash verification state ---
   std::unique_ptr<Ed2kMd4> md4PartCtx_;
   std::vector<unsigned char> partHashes_; // concatenated per-part digests
+  // Persistent read buffer for verification (sized VERIFY_CHUNK once) —
+  // avoids an 8 MiB allocation on every engine tick.
+  std::vector<unsigned char> verifyBuf_;
   int64_t verifyOffset_;
   int64_t verifyPartStart_;
   bool verifyStarted_;
+
+  // Throttles updateContextAttribute() so the O(sources x parts) RPC
+  // snapshot is rebuilt at most once per second instead of every tick.
+  Timer contextAttrTimer_;
 
   // --- Server phase methods ---
   bool serverConnect();
@@ -344,7 +351,10 @@ private:
                         size_t len);
 
   // Record a written range; advance the truthful prefix in PieceStorage.
-  void recordWrittenRange(int64_t start, int64_t end);
+  // Returns the index of the merged range inside writtenRanges_ so that
+  // updatePartCompletion() can inspect exactly the range that changed
+  // (a gap-filling merge does NOT necessarily land at the back).
+  size_t recordWrittenRange(int64_t start, int64_t end);
 
   // Length of the contiguous written prefix starting at offset 0.
   int64_t prefixLength() const;
@@ -383,7 +393,8 @@ private:
 
   // --- Part Availability Manager ---
   void initParts();
-  void updatePartCompletion();
+  // Mark parts covered by writtenRanges_[rangeIndex] as completed.
+  void updatePartCompletion(size_t rangeIndex);
   void updatePartAvailability(size_t sourceIndex,
                               const std::vector<bool>& partBitmap);
   int findBestPartToDownload(size_t sourceIndex);

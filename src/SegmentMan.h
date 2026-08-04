@@ -259,6 +259,12 @@ public:
 
   // Dynamic segmentation methods
   void updateConnectionStats(cuid_t cuid, int64_t downloadedBytes);
+  // Drop the stats entry for a connection that is gone. Without this,
+  // every cuid that ever downloaded leaves a stale entry behind: the
+  // map grows unboundedly over a long download (each retry creates a
+  // new cuid), and dead connections whose last state was "not idle"
+  // are counted as active forever, skewing segment-size calculations.
+  void removeConnectionStats(cuid_t cuid);
   int64_t getDynamicSegmentSize() const;
   void scheduleSegments();
   bool shouldReallocateSegment(cuid_t cuid) const;

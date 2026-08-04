@@ -211,11 +211,10 @@ void md4Final(MD4Context* ctx, unsigned char* digest)
   index = static_cast<size_t>(count & 0x3f);
   padLen = (index < 56) ? (56 - index) : (120 - index);
 
-  md4Update(ctx, reinterpret_cast<const unsigned char*>("\x80"), 1);
-  while (padLen > 1) {
-    md4Update(ctx, reinterpret_cast<const unsigned char*>("\x00"), 1);
-    --padLen;
-  }
+  // 0x80 followed by zeros, applied in one update call instead of
+  // feeding the context byte-by-byte (padLen can be up to 64).
+  static const unsigned char PADDING[64] = {0x80};
+  md4Update(ctx, PADDING, padLen);
   md4Update(ctx, bits, 8);
 
   for (size_t i = 0; i < 4; ++i) {
@@ -224,6 +223,23 @@ void md4Final(MD4Context* ctx, unsigned char* digest)
     digest[i * 4 + 2] = static_cast<unsigned char>(ctx->state[i] >> 16);
     digest[i * 4 + 3] = static_cast<unsigned char>(ctx->state[i] >> 24);
   }
+}
+
+// Split an ed2k:// link on '|'. The trailing part after the last '|'
+// (usually "/" or empty) is included when non-empty.
+std::vector<std::string> splitEd2kLink(const std::string& uri)
+{
+  std::vector<std::string> parts;
+  size_t start = 0;
+  size_t end;
+  while ((end = uri.find('|', start)) != std::string::npos) {
+    parts.push_back(uri.substr(start, end - start));
+    start = end + 1;
+  }
+  if (start < uri.size()) {
+    parts.push_back(uri.substr(start));
+  }
+  return parts;
 }
 
 } // namespace
@@ -269,18 +285,7 @@ std::unique_ptr<Ed2kLinkInfo> Ed2kHelper::parseLink(const std::string& uri)
   }
 
   // ed2k://|file|filename|filesize|hash|/
-  // Split by '|'
-  std::vector<std::string> parts;
-  size_t start = 0;
-  size_t end;
-  while ((end = uri.find('|', start)) != std::string::npos) {
-    parts.push_back(uri.substr(start, end - start));
-    start = end + 1;
-  }
-  // Add the last part after the final '|' if any
-  if (start < uri.size()) {
-    parts.push_back(uri.substr(start));
-  }
+  std::vector<std::string> parts = splitEd2kLink(uri);
 
   // Expected format:
   // parts[0] = "ed2k://"
@@ -404,16 +409,7 @@ bool Ed2kHelper::parseLink(const std::string& uri, Ed2kFileInfo& info)
   // and s=<ip>:<port> (source peers). These appear after the hash field,
   // separated by '|'. Example:
   //   ed2k://|file|name|size|hash|p=1.2.3.4:4661|/
-  std::vector<std::string> parts;
-  size_t start = 0;
-  size_t end;
-  while ((end = uri.find('|', start)) != std::string::npos) {
-    parts.push_back(uri.substr(start, end - start));
-    start = end + 1;
-  }
-  if (start < uri.size()) {
-    parts.push_back(uri.substr(start));
-  }
+  std::vector<std::string> parts = splitEd2kLink(uri);
 
   // parts[5..] are optional params (hash is parts[4])
   for (size_t i = 5; i < parts.size(); ++i) {

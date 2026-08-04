@@ -116,6 +116,11 @@ AbstractCommand::~AbstractCommand()
   disableWriteCheckSocket();
 #ifdef ENABLE_ASYNC_DNS
   asyncNameResolverMan_->disableNameResolverCheck(e_, this);
+  // Release the DNS in-flight slot if this command owned a query that
+  // never completed (e.g. download paused/aborted mid-resolution).
+  if (!inflightDnsHost_.empty()) {
+    e_->endDnsQuery(inflightDnsHost_);
+  }
 #endif // ENABLE_ASYNC_DNS
   requestGroup_->decreaseNumCommand();
   requestGroup_->decreaseStreamCommand();
@@ -807,11 +812,13 @@ std::string AbstractCommand::resolveHostname(std::vector<std::string>& addrs,
                          getCuid(), hostname.c_str()));
         return A2STR::NIL;
       }
+      inflightDnsHost_ = hostname;
       asyncNameResolverMan_->startAsync(hostname, e_, this);
     }
     switch (asyncNameResolverMan_->getStatus()) {
     case -1:
       e_->endDnsQuery(hostname);
+      inflightDnsHost_.clear();
       if (!isProxyRequest(req_->getProtocol(), getOption())) {
         e_->getRequestGroupMan()
             ->getOrCreateServerStat(req_->getHost(), req_->getProtocol())
@@ -828,6 +835,7 @@ std::string AbstractCommand::resolveHostname(std::vector<std::string>& addrs,
       asyncNameResolverMan_->getResolvedAddress(addrs);
       if (addrs.empty()) {
         e_->endDnsQuery(hostname);
+        inflightDnsHost_.clear();
         throw DL_ABORT_EX2(fmt(MSG_NAME_RESOLUTION_FAILED, getCuid(),
                                hostname.c_str(), "No address returned"),
                            error_code::NAME_RESOLVE_ERROR);
@@ -852,6 +860,7 @@ std::string AbstractCommand::resolveHostname(std::vector<std::string>& addrs,
   }
 #ifdef ENABLE_ASYNC_DNS
   e_->endDnsQuery(hostname);
+  inflightDnsHost_.clear();
 #endif // ENABLE_ASYNC_DNS
   ipaddr = e_->findCachedIPAddress(hostname, port);
   return ipaddr;

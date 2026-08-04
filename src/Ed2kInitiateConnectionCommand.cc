@@ -34,6 +34,7 @@
 /* copyright --> */
 #include "Ed2kInitiateConnectionCommand.h"
 
+#include <algorithm>
 #include <map>
 
 #include "DownloadEngine.h"
@@ -156,13 +157,31 @@ bool Ed2kInitiateConnectionCommand::execute()
     // Set up the file entry with the ED2K file information.
     // Apply the user-configured download directory (PREF_DIR) so the file
     // lands in the same place as normal HTTP/BT downloads.
+    //
+    // Security: the filename comes from an untrusted ed2k:// link. Apply
+    // the same directory-traversal defense as the BitTorrent and Metalink
+    // handlers — otherwise a crafted name like "../../x" would escape the
+    // download directory. ED2K filenames are flat names, so normalize
+    // Windows-style separators first, then fall back to a basename.
+    std::string safeName = fileInfo.filename;
+    std::replace(safeName.begin(), safeName.end(), '\\', '/');
+    if (util::detectDirTraversal(safeName)) {
+      A2_LOG_WARN(fmt("CUID#%" PRId64
+                      " - ED2K: stripping path traversal from file name: %s",
+                      getCuid(), safeName.c_str()));
+      auto slash = safeName.find_last_of('/');
+      safeName = (slash == std::string::npos) ? "" : safeName.substr(slash + 1);
+    }
+    if (safeName.empty() || safeName == "." || safeName == "..") {
+      safeName = fileInfo.filehash; // last-resort unique name
+    }
     const std::string& dir = getOption()->get(PREF_DIR);
-    getFileEntry()->setPath(util::applyDir(dir, fileInfo.filename));
-    getFileEntry()->setSuffixPath(fileInfo.filename);
+    getFileEntry()->setPath(util::applyDir(dir, safeName));
+    getFileEntry()->setSuffixPath(safeName);
     getFileEntry()->setLength(fileInfo.filesize);
     // Persist the filename via PREF_OUT so that session save/restore
     // can recover the task name without running execute().
-    getOption()->put(PREF_OUT, fileInfo.filename);
+    getOption()->put(PREF_OUT, safeName);
 
     if (!pieceStorageReady) {
       // First run: PieceStorage not yet initialized.
