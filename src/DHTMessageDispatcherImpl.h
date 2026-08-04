@@ -41,6 +41,7 @@
 namespace aria2 {
 
 class DHTMessageTracker;
+class DHTFirewallState;
 struct DHTMessageEntry;
 
 class DHTMessageDispatcherImpl : public DHTMessageDispatcher {
@@ -50,6 +51,8 @@ private:
   std::deque<std::unique_ptr<DHTMessageEntry>> messageQueue_;
 
   std::chrono::seconds timeout_;
+
+  DHTFirewallState* firewallState_;
 
   bool sendMessage(DHTMessageEntry* msg);
 
@@ -70,6 +73,8 @@ public:
   virtual void sendMessages() CXX11_OVERRIDE;
 
   virtual size_t countMessageInQueue() const CXX11_OVERRIDE;
+
+  virtual void setFirewallState(DHTFirewallState* firewallState) CXX11_OVERRIDE;
 
   void setTimeout(std::chrono::seconds timeout)
   {

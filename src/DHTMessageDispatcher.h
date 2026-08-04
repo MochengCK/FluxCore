@@ -45,6 +45,7 @@ namespace aria2 {
 
 class DHTMessageCallback;
 class DHTMessage;
+class DHTFirewallState;
 
 class DHTMessageDispatcher {
 public:
@@ -62,6 +63,11 @@ public:
   virtual void sendMessages() = 0;
 
   virtual size_t countMessageInQueue() const = 0;
+
+  // Record outbound message destinations so the firewall check can
+  // distinguish unsolicited inbound queries. Default no-op keeps mock
+  // implementations working.
+  virtual void setFirewallState(DHTFirewallState* /*firewallState*/) {}
 };
 
 } // namespace aria2

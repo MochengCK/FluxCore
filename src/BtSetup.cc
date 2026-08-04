@@ -68,6 +68,7 @@
 #include "DHTMessageFactory.h"
 #include "DHTMessageCallback.h"
 #include "UDPTrackerClient.h"
+#include "UPnPContext.h"
 #include "BtProgressInfoFile.h"
 #include "BtAnnounce.h"
 #include "BtRuntime.h"
@@ -212,6 +213,17 @@ void BtSetup::setup(std::vector<std::unique_ptr<Command>>& commands,
     }
     if (btReg->getTcpPort() == 0) {
       throw DL_ABORT_EX(_("Errors occurred while binding port.\n"));
+    }
+
+    // NAT traversal: open the freshly bound TCP listen port on the
+    // gateway via UPnP-IGD, making this client reachable from the
+    // outside (more incoming peer connections → better swarm
+    // participation). Runs exactly once per process; blocked inline
+    // with hard short timeouts (~4s worst case, typically <1s). All
+    // failures are non-fatal and only logged.
+    if (option->getAsBool(PREF_ENABLE_UPNP) &&
+        !UPnPContext::alreadyAttempted()) {
+      getUPnPContext().addPortMapping(btReg->getTcpPort());
     }
   }
   btAnnounce->setTcpPort(btReg->getTcpPort());

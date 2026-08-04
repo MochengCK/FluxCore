@@ -82,6 +82,13 @@ private:
   std::map<std::string, uint32_t> attemptStats_;
   std::map<std::string, uint32_t> failStats_;
   std::map<std::string, uint32_t> tcpFailStats_;
+  // Active outgoing/incoming connection count per peer IP, so a single
+  // abusive or fast host cannot occupy every connection slot. The map
+  // is bounded by the number of distinct IPs in unusedPeers_/usedPeers_.
+  std::map<std::string, size_t> ipConnections_;
+  // Upper bound of concurrent connections per peer IP.
+  static constexpr size_t MAX_CONNECTIONS_PER_IP = 3;
+  bool isIpConnectionFull(const std::string& ip) const;
   std::string peerKey(const std::string& ipaddr, uint16_t port) const;
   // Drop all stats for a peer that is being evicted from every list, so
   // the maps stay bounded by the peers we actually track.

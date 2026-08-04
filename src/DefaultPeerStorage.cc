@@ -366,22 +366,40 @@ void DefaultPeerStorage::deleteUnusedPeer(size_t delSize)
   }
 }
 
+bool DefaultPeerStorage::isIpConnectionFull(const std::string& ip) const
+{
+  auto it = ipConnections_.find(ip);
+  return it != ipConnections_.end() && it->second >= MAX_CONNECTIONS_PER_IP;
+}
+
 std::shared_ptr<Peer> DefaultPeerStorage::checkoutPeer(cuid_t cuid)
 {
   if (!isPeerAvailable()) {
     return nullptr;
   }
   
-  // 跳过被封禁的peer
-  while (!unusedPeers_.empty()) {
+  // 跳过被封禁的peer；跳过已达单 IP 连接上限的 peer（轮转到队尾，
+  // 等现有连接释放后再试，而不是丢弃）。
+  size_t scanned = 0;
+  const size_t initialCount = unusedPeers_.size();
+  while (!unusedPeers_.empty() && scanned < initialCount) {
     auto peer = unusedPeers_.front();
     unusedPeers_.pop_front();
+    ++scanned;
     
     // 检查是否被封禁
     if (isBadPeer(peer->getIPAddress())) {
       A2_LOG_DEBUG(fmt("Skipping peer %s:%u because it is marked bad.",
                        peer->getIPAddress().c_str(), peer->getPort()));
       onErasingPeer(peer);
+      continue;
+    }
+    
+    // 单 IP 并发连接上限：防止一个 IP 占满所有连接槽位
+    if (isIpConnectionFull(peer->getIPAddress())) {
+      A2_LOG_DEBUG(fmt("Deferring peer %s:%u: IP at connection cap",
+                       peer->getIPAddress().c_str(), peer->getPort()));
+      unusedPeers_.push_back(peer);
       continue;
     }
     
@@ -399,6 +417,7 @@ std::shared_ptr<Peer> DefaultPeerStorage::checkoutPeer(cuid_t cuid)
     
     peer->usedBy(cuid);
     usedPeers_.insert(peer);
+    ipConnections_[peer->getIPAddress()] += 1;
     const auto key = peerKey(peer->getIPAddress(), peer->getOrigPort());
     attemptStats_[key] += 1;
     A2_LOG_DEBUG(fmt("Checkout peer %s:%u to CUID#%" PRId64,
@@ -417,6 +436,17 @@ void DefaultPeerStorage::onErasingPeer(const std::shared_ptr<Peer>& peer)
 
 void DefaultPeerStorage::onReturningPeer(const std::shared_ptr<Peer>& peer)
 {
+  // Release the per-IP connection slot for this peer.
+  auto it = ipConnections_.find(peer->getIPAddress());
+  if (it != ipConnections_.end()) {
+    if (it->second > 1) {
+      --it->second;
+    }
+    else {
+      ipConnections_.erase(it);
+    }
+  }
+
   if (peer->isActive()) {
     if (peer->isDisconnectedGracefully() && !peer->isIncomingPeer()) {
       // 节点断开连接时，重置连接时间

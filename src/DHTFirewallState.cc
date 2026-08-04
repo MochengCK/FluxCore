@@ -2,7 +2,7 @@
 /*
  * aria2 - The high speed download utility
  *
- * Copyright (C) 2006 Tatsuhiro Tsujikawa
+ * Copyright (C) 2026 The XferCore Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -32,61 +32,46 @@
  * files in the program, then also delete it here.
  */
 /* copyright --> */
-#ifndef D_DHT_MESSAGE_RECEIVER_H
-#define D_DHT_MESSAGE_RECEIVER_H
+#include "DHTFirewallState.h"
 
-#include "common.h"
+#include <chrono>
 
-#include <string>
-#include <memory>
+#include "LogFactory.h"
+#include "Logger.h"
+#include "fmt.h"
 
 namespace aria2 {
 
-class DHTMessageTracker;
-class DHTMessage;
-class DHTMessageFactory;
-class DHTRoutingTable;
-class DHTUnknownMessage;
-class DHTFirewallState;
+DHTFirewallState::DHTFirewallState() = default;
 
-class DHTMessageReceiver {
-private:
-  std::shared_ptr<DHTMessageTracker> tracker_;
-
-  DHTMessageFactory* factory_;
-
-  DHTRoutingTable* routingTable_;
-
-  DHTFirewallState* firewallState_;
-
-  std::unique_ptr<DHTUnknownMessage>
-  handleUnknownMessage(const unsigned char* data, size_t length,
-                       const std::string& remoteAddr, uint16_t remotePort);
-
-  void onMessageReceived(DHTMessage* message);
-
-public:
-  DHTMessageReceiver(const std::shared_ptr<DHTMessageTracker>& tracker);
-
-  std::unique_ptr<DHTMessage> receiveMessage(const std::string& remoteAddr,
-                                             uint16_t remotePort,
-                                             unsigned char* data,
-                                             size_t length);
-
-  void handleTimeout();
-
-  void setFirewallState(DHTFirewallState* firewallState);
-
-  const std::shared_ptr<DHTMessageTracker>& getMessageTracker() const
-  {
-    return tracker_;
+void DHTFirewallState::noteOutbound(const std::string& ip)
+{
+  if (contactedIps_.size() < MAX_CONTACTED_IPS) {
+    contactedIps_.insert(ip);
   }
+}
 
-  void setMessageFactory(DHTMessageFactory* factory);
+void DHTFirewallState::noteInboundQuery(const std::string& ip)
+{
+  if (open_) {
+    return;
+  }
+  if (contactedIps_.count(ip) == 0) {
+    // An inbound query from an IP we never contacted can only pass
+    // through an open port — we are reachable from the outside.
+    open_ = true;
+    A2_LOG_INFO(fmt("DHT: inbound query from unknown peer %s — UDP port "
+                    "confirmed reachable (not firewalled)",
+                    ip.c_str()));
+  }
+}
 
-  void setRoutingTable(DHTRoutingTable* routingTable);
-};
+bool DHTFirewallState::canAnnounce() const
+{
+  if (open_) {
+    return true;
+  }
+  return startTime_.difference() < std::chrono::seconds(GRACE_SECONDS);
+}
 
 } // namespace aria2
-
-#endif // D_DHT_MESSAGE_RECEIVER_H

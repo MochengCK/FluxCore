@@ -70,6 +70,7 @@
 #include "wallclock.h"
 #ifdef ENABLE_BITTORRENT
 #  include "BtStatisticsManager.h"
+#  include "UPnPContext.h"
 #endif // ENABLE_BITTORRENT
 #include "File.h"
 #include "prefs.h"
@@ -281,6 +282,8 @@ void DownloadEngine::onEndOfRun()
   if (btStatisticsManager_) {
     btStatisticsManager_->save();
   }
+  // Best-effort removal of the UPnP port mapping created at startup.
+  getUPnPContext().removePortMapping();
 #endif // ENABLE_BITTORRENT
 }
 

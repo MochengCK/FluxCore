@@ -46,6 +46,7 @@
 #include "DHTRoutingTable.h"
 #include "DHTNode.h"
 #include "DHTMessageCallback.h"
+#include "DHTFirewallState.h"
 #include "DlAbortEx.h"
 #include "LogFactory.h"
 #include "Logger.h"
@@ -57,7 +58,10 @@ namespace aria2 {
 
 DHTMessageReceiver::DHTMessageReceiver(
     const std::shared_ptr<DHTMessageTracker>& tracker)
-    : tracker_{tracker}, factory_{nullptr}, routingTable_{nullptr}
+    : tracker_{tracker},
+      factory_{nullptr},
+      routingTable_{nullptr},
+      firewallState_{nullptr}
 {
 }
 
@@ -102,6 +106,12 @@ DHTMessageReceiver::receiveMessage(const std::string& remoteAddr,
       return std::move(p.first);
     }
     else {
+      // Inbound query (request). If it comes from an IP we never
+      // contacted, our UDP port is provably open — feed the firewall
+      // check.
+      if (firewallState_) {
+        firewallState_->noteInboundQuery(remoteAddr);
+      }
       auto message = factory_->createQueryMessage(dict, remoteAddr, remotePort);
       if (*message->getLocalNode() == *message->getRemoteNode()) {
         // drop message from localnode
@@ -142,6 +152,11 @@ std::unique_ptr<DHTUnknownMessage> DHTMessageReceiver::handleUnknownMessage(
 void DHTMessageReceiver::setMessageFactory(DHTMessageFactory* factory)
 {
   factory_ = factory;
+}
+
+void DHTMessageReceiver::setFirewallState(DHTFirewallState* firewallState)
+{
+  firewallState_ = firewallState;
 }
 
 void DHTMessageReceiver::setRoutingTable(DHTRoutingTable* routingTable)

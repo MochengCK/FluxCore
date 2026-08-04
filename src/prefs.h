@@ -442,6 +442,8 @@ extern PrefPtr PREF_PEER_AGENT;
 extern PrefPtr PREF_ENABLE_PEER_EXCHANGE;
 // values: true | false
 extern PrefPtr PREF_ENABLE_DHT;
+// values: true | false
+extern PrefPtr PREF_ENABLE_UPNP;
 // values: a string
 extern PrefPtr PREF_DHT_LISTEN_ADDR;
 // values: 1*digit

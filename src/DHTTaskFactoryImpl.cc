@@ -122,6 +122,7 @@ void DHTTaskFactoryImpl::setCommonProperty(
   task->setMessageFactory(factory_);
   task->setTaskQueue(taskQueue_);
   task->setLocalNode(localNode_);
+  task->setFirewallState(firewallState_);
 }
 
 void DHTTaskFactoryImpl::setRoutingTable(DHTRoutingTable* routingTable)
@@ -142,6 +143,11 @@ void DHTTaskFactoryImpl::setMessageFactory(DHTMessageFactory* factory)
 void DHTTaskFactoryImpl::setTaskQueue(DHTTaskQueue* taskQueue)
 {
   taskQueue_ = taskQueue;
+}
+
+void DHTTaskFactoryImpl::setFirewallState(DHTFirewallState* firewallState)
+{
+  firewallState_ = firewallState;
 }
 
 void DHTTaskFactoryImpl::setLocalNode(const std::shared_ptr<DHTNode>& localNode)

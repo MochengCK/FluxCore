@@ -66,6 +66,11 @@ void DHTAbstractTask::setMessageDispatcher(DHTMessageDispatcher* dispatcher)
   dispatcher_ = dispatcher;
 }
 
+void DHTAbstractTask::setFirewallState(DHTFirewallState* firewallState)
+{
+  firewallState_ = firewallState;
+}
+
 void DHTAbstractTask::setMessageFactory(DHTMessageFactory* factory)
 {
   factory_ = factory;

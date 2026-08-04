@@ -64,6 +64,7 @@
 #include "DHTMessageTrackerEntry.h"
 #include "DHTMessageEntry.h"
 #include "UDPTrackerClient.h"
+#include "DHTFirewallState.h"
 #include "BtRegistry.h"
 #include "prefs.h"
 #include "Option.h"
@@ -178,16 +179,24 @@ DHTSetup::setup(DownloadEngine* e, int family)
     tracker->setRoutingTable(routingTable.get());
     tracker->setMessageFactory(factory.get());
 
+    // BEP 5 firewall check: shared state observed by the dispatcher
+    // (outbound destinations), the receiver (inbound queries) and the
+    // peer-lookup task (announce gate).
+    auto firewallState = std::make_shared<DHTFirewallState>();
+
     dispatcher->setTimeout(std::chrono::seconds(messageTimeout));
+    dispatcher->setFirewallState(firewallState.get());
 
     receiver->setMessageFactory(factory.get());
     receiver->setRoutingTable(routingTable.get());
+    receiver->setFirewallState(firewallState.get());
 
     taskFactory->setLocalNode(localNode);
     taskFactory->setRoutingTable(routingTable.get());
     taskFactory->setMessageDispatcher(dispatcher.get());
     taskFactory->setMessageFactory(factory.get());
     taskFactory->setTaskQueue(taskQueue.get());
+    taskFactory->setFirewallState(firewallState.get());
     taskFactory->setTimeout(std::chrono::seconds(messageTimeout));
 
     routingTable->setTaskQueue(taskQueue.get());

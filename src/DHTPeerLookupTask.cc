@@ -34,6 +34,7 @@
 /* copyright --> */
 #include "DHTPeerLookupTask.h"
 #include "Peer.h"
+#include "DHTFirewallState.h"
 #include "DHTGetPeersReplyMessage.h"
 #include "Logger.h"
 #include "LogFactory.h"
@@ -97,6 +98,18 @@ void DHTPeerLookupTask::onFinish()
 {
   A2_LOG_DEBUG(fmt("Peer lookup for %s finished",
                    util::toHex(getTargetID(), DHT_ID_LENGTH).c_str()));
+
+  // BEP 5: firewalled nodes must not announce themselves — their
+  // announces are unreachable and only pollute the network. get_peers
+  // lookups above still work (outbound), but the announce_peer phase is
+  // gated on proof of inbound reachability (see DHTFirewallState).
+  if (getFirewallState() && !getFirewallState()->canAnnounce()) {
+    A2_LOG_INFO(fmt("DHT: skipping announce_peer for %s — UDP port appears "
+                    "firewalled (no inbound queries observed)",
+                    util::toHex(getTargetID(), DHT_ID_LENGTH).c_str()));
+    return;
+  }
+
   // send announce_peer message to K closest nodes
   size_t num = DHTBucket::K;
   for (auto i = std::begin(getEntries()), eoi = std::end(getEntries());

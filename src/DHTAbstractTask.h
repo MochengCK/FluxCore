@@ -49,6 +49,7 @@ class DHTMessageDispatcher;
 class DHTMessageFactory;
 class DHTMessage;
 class DHTTaskQueue;
+class DHTFirewallState;
 
 class DHTAbstractTask : public DHTTask {
 private:
@@ -63,6 +64,8 @@ private:
   DHTMessageFactory* factory_;
 
   DHTTaskQueue* taskQueue_;
+
+  DHTFirewallState* firewallState_;
 
 protected:
   void setFinished(bool f) { finished_ = f; }
@@ -87,6 +90,10 @@ public:
   DHTTaskQueue* getTaskQueue() const { return taskQueue_; }
 
   void setTaskQueue(DHTTaskQueue* taskQueue);
+
+  DHTFirewallState* getFirewallState() const { return firewallState_; }
+
+  void setFirewallState(DHTFirewallState* firewallState);
 
   const std::shared_ptr<DHTNode>& getLocalNode() const { return localNode_; }
 

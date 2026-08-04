@@ -275,6 +275,8 @@ SRCS =  \
 	Ed2kHelper.cc Ed2kHelper.h\
 	Ed2kInitiateConnectionCommand.cc Ed2kInitiateConnectionCommand.h\
 	Ed2kDownloadCommand.cc Ed2kDownloadCommand.h\
+	UPnPContext.cc UPnPContext.h\
+	DHTFirewallState.cc DHTFirewallState.h\
 	libssl_compat.h
 
 if MINGW_BUILD

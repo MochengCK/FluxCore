@@ -46,6 +46,7 @@ class DHTMessageDispatcher;
 class DHTMessageFactory;
 class DHTTaskQueue;
 class DHTAbstractTask;
+class DHTFirewallState;
 
 class DHTTaskFactoryImpl : public DHTTaskFactory {
 private:
@@ -58,6 +59,8 @@ private:
   DHTMessageFactory* factory_;
 
   DHTTaskQueue* taskQueue_;
+
+  DHTFirewallState* firewallState_;
 
   std::chrono::seconds timeout_;
 
@@ -97,6 +100,8 @@ public:
   void setTaskQueue(DHTTaskQueue* taskQueue);
 
   void setLocalNode(const std::shared_ptr<DHTNode>& localNode);
+
+  void setFirewallState(DHTFirewallState* firewallState);
 
   void setTimeout(std::chrono::seconds timeout)
   {

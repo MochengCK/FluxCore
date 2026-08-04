@@ -340,6 +340,11 @@
     "                              UDP tracker support. If a private flag is set\n" \
     "                              in a torrent, aria2 doesn't use DHT for that\n" \
     "                              download even if ``true`` is given.")
+#define TEXT_ENABLE_UPNP                                        \
+  _(" --enable-upnp[=true|false]   Enable UPnP IGD port mapping for NAT traversal.\n" \
+    "                              Opens the BitTorrent TCP listen port on the\n" \
+    "                              gateway so the client is reachable from the\n" \
+    "                              outside. Requires a UPnP-enabled router.")
 #define TEXT_DHT_LISTEN_PORT                                            \
   _(" --dht-listen-port=PORT...    Set UDP listening port used by DHT(IPv4, IPv6)\n"   \
     "                              and UDP tracker. Multiple ports can be specified\n" \

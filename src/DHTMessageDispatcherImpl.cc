@@ -37,6 +37,7 @@
 #include "DHTMessageCallback.h"
 #include "DHTMessageEntry.h"
 #include "DHTMessageTracker.h"
+#include "DHTFirewallState.h"
 #include "RecoverableException.h"
 #include "LogFactory.h"
 #include "Logger.h"
@@ -49,7 +50,9 @@ namespace aria2 {
 
 DHTMessageDispatcherImpl::DHTMessageDispatcherImpl(
     const std::shared_ptr<DHTMessageTracker>& tracker)
-    : tracker_{tracker}, timeout_{DHT_MESSAGE_TIMEOUT}
+    : tracker_{tracker},
+      timeout_{DHT_MESSAGE_TIMEOUT},
+      firewallState_{nullptr}
 {
 }
 
@@ -75,6 +78,12 @@ bool DHTMessageDispatcherImpl::sendMessage(DHTMessageEntry* entry)
       if (!entry->message->isReply()) {
         tracker_->addMessage(entry->message.get(), entry->timeout,
                              std::move(entry->callback));
+      }
+      // Record the destination so inbound queries from IPs we never
+      // contacted can be recognized as firewall-check evidence.
+      if (firewallState_ && entry->message->getRemoteNode()) {
+        firewallState_->noteOutbound(
+            entry->message->getRemoteNode()->getIPAddress());
       }
       A2_LOG_INFO(fmt("Message sent: %s", entry->message->toString().c_str()));
     }
@@ -114,6 +123,11 @@ void DHTMessageDispatcherImpl::sendMessages()
 size_t DHTMessageDispatcherImpl::countMessageInQueue() const
 {
   return messageQueue_.size();
+}
+
+void DHTMessageDispatcherImpl::setFirewallState(DHTFirewallState* firewallState)
+{
+  firewallState_ = firewallState;
 }
 
 } // namespace aria2
