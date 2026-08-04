@@ -67,6 +67,7 @@
 #include "PieceStorage.h"
 #include "PeerStorage.h"
 #include "BtRuntime.h"
+#include "BtConstants.h"
 #include "BtMessageReceiver.h"
 #include "BtMessageDispatcher.h"
 #include "BtMessageFactory.h"
@@ -421,8 +422,19 @@ void DefaultBtInteractive::addRequests()
     if (endGameThreshold == 0) {
       endGameThreshold = 20;
     }
+    // countMissingPiece() counts missing *blocks* (16KiB units), not
+    // pieces. Scale the threshold into block units so endgame starts
+    // with endGameThreshold pieces remaining (≈20 × 4MiB = 80MB), as
+    // the threshold's piece-based intent describes. Without the scale,
+    // endgame only triggered with ~20 blocks (320KiB) left — barely
+    // different from upstream and the tail-stall it is meant to avoid.
+    size_t blocksPerPiece = static_cast<size_t>(
+        downloadContext_->getPieceLength() / MAX_BLOCK_LENGTH);
+    if (blocksPerPiece == 0) {
+      blocksPerPiece = 1;
+    }
     size_t remaining = pieceStorage_->countMissingPiece();
-    if (remaining <= endGameThreshold ||
+    if (remaining <= endGameThreshold * blocksPerPiece ||
         !pieceStorage_->hasMissingUnusedPiece()) {
       pieceStorage_->enterEndGame();
     }

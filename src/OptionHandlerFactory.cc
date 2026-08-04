@@ -1496,6 +1496,22 @@ std::vector<OptionHandler*> OptionHandlerFactory::createOptionHandlers()
     handlers.push_back(op);
   }
   {
+    OptionHandler* op(new BooleanOptionHandler(PREF_ENABLE_NAT_PMP,
+                                               TEXT_ENABLE_NAT_PMP, A2_V_TRUE,
+                                               OptionHandler::OPT_ARG));
+    op->addTag(TAG_BITTORRENT);
+    op->setInitialOption(true);
+    handlers.push_back(op);
+  }
+  {
+    OptionHandler* op(new BooleanOptionHandler(PREF_ENABLE_UTP,
+                                               TEXT_ENABLE_UTP, A2_V_TRUE,
+                                               OptionHandler::OPT_ARG));
+    op->addTag(TAG_BITTORRENT);
+    op->setInitialOption(true);
+    handlers.push_back(op);
+  }
+  {
     OptionHandler* op(new DefaultOptionHandler(
         PREF_BT_EXCLUDE_TRACKER, TEXT_BT_EXCLUDE_TRACKER, NO_DESCRIPTION,
         "URI,... "

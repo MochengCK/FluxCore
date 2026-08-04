@@ -33,6 +33,7 @@
  */
 /* copyright --> */
 #include "ReceiverMSEHandshakeCommand.h"
+#include "SocketLike.h"
 #include "PeerReceiveHandshakeCommand.h"
 #include "PeerConnection.h"
 #include "DownloadEngine.h"
@@ -103,7 +104,7 @@ bool ReceiverMSEHandshakeCommand::executeInternal()
               " preference.");
         }
         auto peerConnection =
-            make_unique<PeerConnection>(getCuid(), getPeer(), getSocket());
+            make_unique<PeerConnection>(getCuid(), getPeer(), make_unique<TcpSocketLike>(getSocket()));
         peerConnection->presetBuffer(mseHandshake_->getBuffer(),
                                      mseHandshake_->getBufferLength());
         getDownloadEngine()->addCommand(
@@ -214,7 +215,7 @@ bool ReceiverMSEHandshakeCommand::executeInternal()
 void ReceiverMSEHandshakeCommand::createCommand()
 {
   auto peerConnection =
-      make_unique<PeerConnection>(getCuid(), getPeer(), getSocket());
+      make_unique<PeerConnection>(getCuid(), getPeer(), make_unique<TcpSocketLike>(getSocket()));
   if (mseHandshake_->getNegotiatedCryptoType() == MSEHandshake::CRYPTO_ARC4) {
     peerConnection->enableEncryption(mseHandshake_->popEncryptor(),
                                      mseHandshake_->popDecryptor());

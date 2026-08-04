@@ -71,6 +71,8 @@
 #ifdef ENABLE_BITTORRENT
 #  include "BtStatisticsManager.h"
 #  include "UPnPContext.h"
+#  include "NatPmpContext.h"
+#  include "UtpContext.h"
 #endif // ENABLE_BITTORRENT
 #include "File.h"
 #include "prefs.h"
@@ -117,6 +119,14 @@ DownloadEngine::DownloadEngine(std::unique_ptr<EventPoll> eventPoll)
   unsigned char sessionId[20];
   util::generateRandomKey(sessionId);
   sessionId_.assign(&sessionId[0], &sessionId[sizeof(sessionId)]);
+#ifdef ENABLE_BITTORRENT
+  // Host the uTP transport (shared UDP socket). Best-effort: if the
+  // bind fails the context is dropped and getUtpContext() returns null.
+  utpContext_ = make_unique<utp::UtpContext>();
+  if (!utpContext_->start()) {
+    utpContext_.reset();
+  }
+#endif // ENABLE_BITTORRENT
 }
 
 DownloadEngine::~DownloadEngine() {}
@@ -282,8 +292,10 @@ void DownloadEngine::onEndOfRun()
   if (btStatisticsManager_) {
     btStatisticsManager_->save();
   }
-  // Best-effort removal of the UPnP port mapping created at startup.
+  // Best-effort removal of the UPnP / NAT-PMP port mappings created at
+  // startup.
   getUPnPContext().removePortMapping();
+  getNatPmpContext().removePortMapping();
 #endif // ENABLE_BITTORRENT
 }
 

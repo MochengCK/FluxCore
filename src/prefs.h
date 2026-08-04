@@ -444,6 +444,10 @@ extern PrefPtr PREF_ENABLE_PEER_EXCHANGE;
 extern PrefPtr PREF_ENABLE_DHT;
 // values: true | false
 extern PrefPtr PREF_ENABLE_UPNP;
+// values: true | false
+extern PrefPtr PREF_ENABLE_NAT_PMP;
+// values: true | false
+extern PrefPtr PREF_ENABLE_UTP;
 // values: a string
 extern PrefPtr PREF_DHT_LISTEN_ADDR;
 // values: 1*digit

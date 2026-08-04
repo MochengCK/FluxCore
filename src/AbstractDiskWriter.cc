@@ -265,6 +265,14 @@ ssize_t AbstractDiskWriter::writeDataInternal(const unsigned char* data,
     ssize_t writtenLength = 0;
     while ((size_t)writtenLength < len) {
 #ifdef __MINGW32__
+      // WriteFile() without OVERLAPPED writes at the current file
+      // pointer — reposition explicitly, mirroring the POSIX pwrite()
+      // path, or the data lands at the wrong offset.
+      LARGE_INTEGER li;
+      li.QuadPart = offset + writtenLength;
+      if (!SetFilePointerEx(fd_, li, nullptr, FILE_BEGIN)) {
+        return -1;
+      }
       DWORD nwrite;
       if (WriteFile(fd_, data + writtenLength, len - writtenLength, &nwrite,
                     0)) {
@@ -305,6 +313,13 @@ ssize_t AbstractDiskWriter::readDataInternal(unsigned char* data, size_t len,
   }
   else {
 #ifdef __MINGW32__
+    // ReadFile() without OVERLAPPED reads at the current file pointer —
+    // reposition to the requested offset first (see writeDataInternal).
+    LARGE_INTEGER li;
+    li.QuadPart = offset;
+    if (!SetFilePointerEx(fd_, li, nullptr, FILE_BEGIN)) {
+      return -1;
+    }
     DWORD nread;
     if (ReadFile(fd_, data, len, &nread, 0)) {
       return nread;

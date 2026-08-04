@@ -567,6 +567,12 @@ void AbstractCommand::disableReadCheckSocket()
 void AbstractCommand::setReadCheckSocket(
     const std::shared_ptr<SocketCore>& socket)
 {
+  // Null socket: commands driven by an external pump (e.g. uTP peer
+  // connections) register no event-loop checks.
+  if (!socket) {
+    disableReadCheckSocket();
+    return;
+  }
   if (!socket->isOpen()) {
     disableReadCheckSocket();
     return;
@@ -610,6 +616,10 @@ void AbstractCommand::disableWriteCheckSocket()
 void AbstractCommand::setWriteCheckSocket(
     const std::shared_ptr<SocketCore>& socket)
 {
+  if (!socket) {
+    disableWriteCheckSocket();
+    return;
+  }
   if (!socket->isOpen()) {
     disableWriteCheckSocket();
     return;

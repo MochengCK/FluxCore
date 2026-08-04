@@ -33,6 +33,7 @@
  */
 /* copyright --> */
 #include "InitiatorMSEHandshakeCommand.h"
+#include "SocketLike.h"
 #include "PeerInitiateConnectionCommand.h"
 #include "PeerInteractionCommand.h"
 #include "DownloadEngine.h"
@@ -153,7 +154,7 @@ bool InitiatorMSEHandshakeCommand::executeInternal()
     case INITIATOR_RECEIVE_PAD_D: {
       if (mseHandshake_->receivePad()) {
         auto peerConnection =
-            make_unique<PeerConnection>(getCuid(), getPeer(), getSocket());
+            make_unique<PeerConnection>(getCuid(), getPeer(), make_unique<TcpSocketLike>(getSocket()));
         if (mseHandshake_->getNegotiatedCryptoType() ==
             MSEHandshake::CRYPTO_ARC4) {
           size_t buflen = mseHandshake_->getBufferLength();

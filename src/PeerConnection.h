@@ -49,6 +49,7 @@ namespace aria2 {
 
 class Peer;
 class SocketCore;
+class SocketLike;
 class ARC4Encryptor;
 
 // The maximum length of buffer. If the message length (including 4
@@ -60,7 +61,7 @@ class PeerConnection {
 private:
   cuid_t cuid_;
   std::shared_ptr<Peer> peer_;
-  std::shared_ptr<SocketCore> socket_;
+  std::shared_ptr<SocketLike> transport_;
 
   int msgState_;
   // The capacity of the buffer resbuf_
@@ -89,8 +90,9 @@ private:
   ssize_t sendData(const unsigned char* data, size_t length, bool encryption);
 
 public:
+  // transport: TCP (TcpSocketLike) or uTP (UtpSocketLike) byte stream.
   PeerConnection(cuid_t cuid, const std::shared_ptr<Peer>& peer,
-                 const std::shared_ptr<SocketCore>& socket);
+                 std::unique_ptr<SocketLike> transport);
 
   ~PeerConnection();
 
@@ -111,10 +113,10 @@ public:
   bool receiveHandshake(unsigned char* data, size_t& dataLength,
                         bool peek = false);
 
-void enableEncryption(std::unique_ptr<ARC4Encryptor> encryptor,
-                      std::unique_ptr<ARC4Encryptor> decryptor);
+  void enableEncryption(std::unique_ptr<ARC4Encryptor> encryptor,
+                        std::unique_ptr<ARC4Encryptor> decryptor);
 
-bool isEncryptionEnabled() const { return encryptionEnabled_; }
+  bool isEncryptionEnabled() const { return encryptionEnabled_; }
 
   void presetBuffer(const unsigned char* data, size_t length);
 

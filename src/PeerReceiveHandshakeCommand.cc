@@ -33,6 +33,7 @@
  */
 /* copyright --> */
 #include "PeerReceiveHandshakeCommand.h"
+#include "SocketLike.h"
 
 #include <cstring>
 
@@ -75,7 +76,7 @@ PeerReceiveHandshakeCommand::PeerReceiveHandshakeCommand(
     }
   }
   else {
-    peerConnection_ = make_unique<PeerConnection>(cuid, getPeer(), getSocket());
+    peerConnection_ = make_unique<PeerConnection>(cuid, getPeer(), make_unique<TcpSocketLike>(getSocket()));
   }
 }
 

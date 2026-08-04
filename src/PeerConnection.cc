@@ -44,6 +44,7 @@
 #include "Logger.h"
 #include "BtHandshakeMessage.h"
 #include "SocketCore.h"
+#include "SocketLike.h"
 #include "a2netcompat.h"
 #include "ARC4Encryptor.h"
 #include "fmt.h"
@@ -64,10 +65,10 @@ enum {
 } // namespace
 
 PeerConnection::PeerConnection(cuid_t cuid, const std::shared_ptr<Peer>& peer,
-                               const std::shared_ptr<SocketCore>& socket)
+                               std::unique_ptr<SocketLike> transport)
     : cuid_(cuid),
       peer_(peer),
-      socket_(socket),
+      transport_(std::move(transport)),
       msgState_(BT_MSG_PREV_READ_LENGTH),
       bufferCapacity_(MAX_BUFFER_CAPACITY),
       resbuf_(make_unique<unsigned char[]>(bufferCapacity_)),
@@ -75,7 +76,7 @@ PeerConnection::PeerConnection(cuid_t cuid, const std::shared_ptr<Peer>& peer,
       currentPayloadLength_(0),
       resbufOffset_(0),
       msgOffset_(0),
-      socketBuffer_(socket),
+      socketBuffer_(transport_),
       encryptionEnabled_(false),
       prevPeek_(false)
 {
@@ -179,7 +180,7 @@ bool PeerConnection::receiveMessage(unsigned char* data, size_t& dataLength)
       }
       readData(resbuf_.get() + resbufLength_, nread, encryptionEnabled_);
       if (nread == 0) {
-        if (socket_->wantRead() || socket_->wantWrite()) {
+        if (transport_->wantRead() || transport_->wantWrite()) {
           break;
         }
         else {
@@ -207,7 +208,7 @@ bool PeerConnection::receiveHandshake(unsigned char* data, size_t& dataLength,
   if (remaining > 0) {
     size_t temp = remaining;
     readData(resbuf_.get() + resbufLength_, remaining, encryptionEnabled_);
-    if (remaining == 0 && !socket_->wantRead() && !socket_->wantWrite()) {
+    if (remaining == 0 && !transport_->wantRead() && !transport_->wantWrite()) {
       // we got EOF
       A2_LOG_DEBUG(fmt("CUID#%" PRId64
                        " - In PeerConnection::receiveHandshake(), remain=%lu",
@@ -232,7 +233,7 @@ bool PeerConnection::receiveHandshake(unsigned char* data, size_t& dataLength,
 void PeerConnection::readData(unsigned char* data, size_t& length,
                               bool encryption)
 {
-  socket_->readData(data, length);
+  transport_->readData(data, length);
   if (encryption) {
     decryptor_->encrypt(length, data, data);
   }

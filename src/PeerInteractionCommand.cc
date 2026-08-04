@@ -33,6 +33,7 @@
  */
 /* copyright --> */
 #include "PeerInteractionCommand.h"
+#include "SocketLike.h"
 
 #include <algorithm>
 
@@ -160,7 +161,7 @@ PeerInteractionCommand::PeerInteractionCommand(
   }
 
   if (!peerConnection) {
-    peerConnection = make_unique<PeerConnection>(cuid, getPeer(), getSocket());
+    peerConnection = make_unique<PeerConnection>(cuid, getPeer(), make_unique<TcpSocketLike>(getSocket()));
   }
   else {
     if (sequence_ == RECEIVER_WAIT_HANDSHAKE &&
@@ -314,7 +315,10 @@ bool PeerInteractionCommand::executeInternal()
   while (!done) {
     switch (sequence_) {
     case INITIATOR_SEND_HANDSHAKE:
-      if (!getSocket()->isWritable(0)) {
+      // Null socket = uTP transport: the connection is considered
+      // writable once the uTP handshake completes (driven by
+      // utp::UtpCommand), so skip the socket writability wait.
+      if (getSocket() && !getSocket()->isWritable(0)) {
         done = true;
         break;
       }

@@ -66,6 +66,12 @@ private:
   bool isTorrentDownload();
   void save(IOFile& fp);
 
+  // Legacy (pre ".xfer" rename) control-file path for upgrade migration.
+  std::string legacyFilename() const;
+  // Move a legacy .aria2 control file to the current name, or fall back
+  // to reading it in place. Returns true when the legacy file exists.
+  bool migrateLegacyFile();
+
 public:
   DefaultBtProgressInfoFile(const std::shared_ptr<DownloadContext>& btContext,
                             const std::shared_ptr<PieceStorage>& pieceStorage,

@@ -276,6 +276,13 @@ SRCS =  \
 	Ed2kInitiateConnectionCommand.cc Ed2kInitiateConnectionCommand.h\
 	Ed2kDownloadCommand.cc Ed2kDownloadCommand.h\
 	UPnPContext.cc UPnPContext.h\
+	NatPmpContext.cc NatPmpContext.h\
+	UtpPacket.cc UtpPacket.h\
+	UtpConnection.cc UtpConnection.h\
+	UtpContext.cc UtpContext.h\
+	UtpCommand.cc UtpCommand.h\
+	UtpSocketLike.cc UtpSocketLike.h\
+	SocketLike.cc SocketLike.h\
 	DHTFirewallState.cc DHTFirewallState.h\
 	libssl_compat.h
 

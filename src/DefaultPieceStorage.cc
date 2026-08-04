@@ -385,6 +385,9 @@ bool DefaultPieceStorage::hasMissingUnusedPiece()
 
 size_t DefaultPieceStorage::countMissingPiece() const
 {
+  // NOTE: the name says "piece" but this returns the number of missing
+  // *blocks* (16KiB units) — O(words), cheap enough for per-tick use.
+  // Callers that need a piece-level count must scale by blocks-per-piece.
   return bitfieldMan_->countMissingBlock();
 }
 

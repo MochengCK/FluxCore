@@ -45,6 +45,13 @@
 #include <chrono>
 
 #include "a2netcompat.h"
+
+namespace aria2 {
+namespace utp {
+class UtpContext;
+} // namespace utp
+} // namespace aria2
+
 #include "TimerA2.h"
 #include "a2io.h"
 #include "CUIDCounter.h"
@@ -136,6 +143,9 @@ private:
 #ifdef ENABLE_BITTORRENT
   std::unique_ptr<BtRegistry> btRegistry_;
   std::unique_ptr<BtStatisticsManager> btStatisticsManager_;
+  // Host for the uTP (BEP 29) transport: owns the shared UDP socket
+  // and all uTP connections. Driven by utp::UtpCommand.
+  std::unique_ptr<utp::UtpContext> utpContext_;
 #endif // ENABLE_BITTORRENT
 
   CUIDCounter cuidCounter_;
@@ -305,6 +315,9 @@ public:
   {
     return btStatisticsManager_.get();
   }
+
+  // The uTP transport host (nullptr if the UDP socket could not bind).
+  utp::UtpContext* getUtpContext() const { return utpContext_.get(); }
 #endif // ENABLE_BITTORRENT
 
   cuid_t newCUID();

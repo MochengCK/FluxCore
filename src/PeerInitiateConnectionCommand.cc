@@ -33,6 +33,7 @@
  */
 /* copyright --> */
 #include "PeerInitiateConnectionCommand.h"
+#include "UtpContext.h"
 #include "InitiatorMSEHandshakeCommand.h"
 #include "PeerInteractionCommand.h"
 #include "DownloadEngine.h"
@@ -48,6 +49,7 @@
 #include "PeerStorage.h"
 #include "PieceStorage.h"
 #include "PeerConnection.h"
+#include "UtpSocketLike.h"
 #include "RequestGroup.h"
 #include "util.h"
 #include "fmt.h"
@@ -77,6 +79,35 @@ bool PeerInitiateConnectionCommand::executeInternal()
 {
   A2_LOG_INFO(fmt(MSG_CONNECTING_TO_SERVER, getCuid(),
                   getPeer()->getIPAddress().c_str(), getPeer()->getPort()));
+
+  // uTP (BEP 29) first: when enabled and the transport is hosted, try
+  // the peer over UDP with delay-based congestion control. The BT
+  // handshake runs over the uTP stream (plain, no MSE). If the uTP
+  // connection dies, the peer returns to storage and a later checkout
+  // retries it (TCP path included).
+  auto utpCtx = getDownloadEngine()->getUtpContext();
+  const auto* opt = getDownloadEngine()->getOption();
+  bool plainAllowed = !opt->getAsBool(PREF_BT_REQUIRE_CRYPTO) &&
+                      !opt->getAsBool(PREF_BT_FORCE_ENCRYPTION) &&
+                      opt->get(PREF_BT_MIN_CRYPTO_LEVEL) == V_PLAIN;
+  if (utpCtx && opt->getAsBool(PREF_ENABLE_UTP) && plainAllowed) {
+    auto conn =
+        utpCtx->connect(getPeer()->getIPAddress(), getPeer()->getPort());
+    if (conn) {
+      A2_LOG_INFO(fmt("CUID#%" PRId64 " - Trying uTP connection to %s:%u",
+                      getCuid(), getPeer()->getIPAddress().c_str(),
+                      getPeer()->getPort()));
+      auto peerConnection = make_unique<PeerConnection>(
+          getCuid(), getPeer(), make_unique<UtpSocketLike>(conn));
+      getDownloadEngine()->addCommand(make_unique<PeerInteractionCommand>(
+          getCuid(), requestGroup_, getPeer(), getDownloadEngine(), btRuntime_,
+          pieceStorage_, peerStorage_, nullptr /* no TCP socket */,
+          PeerInteractionCommand::INITIATOR_SEND_HANDSHAKE,
+          std::move(peerConnection)));
+      return true;
+    }
+  }
+
   createSocket();
   getSocket()->establishConnection(getPeer()->getIPAddress(),
                                    getPeer()->getPort(), false);
@@ -85,7 +116,6 @@ bool PeerInitiateConnectionCommand::executeInternal()
   // 跳过 MSE DH 协商。自适应/强制加密模式仍走 MSE。
   // 仅当 mseHandshakeEnabled_ 为 true（默认值）时按配置调整；若调用方
   // 显式传 false（MSE 失败回退 Legacy），保持 false 不变。
-  const auto* opt = getDownloadEngine()->getOption();
   if (mseHandshakeEnabled_ && !opt->getAsBool(PREF_BT_REQUIRE_CRYPTO) &&
       !opt->getAsBool(PREF_BT_FORCE_ENCRYPTION) &&
       opt->get(PREF_BT_MIN_CRYPTO_LEVEL) == V_PLAIN) {

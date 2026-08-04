@@ -35,6 +35,7 @@
 #include "DefaultBtProgressInfoFile.h"
 
 #include <cstring>
+#include <cerrno>
 #include <cstdio>
 #include <array>
 
@@ -408,6 +409,12 @@ void DefaultBtProgressInfoFile::removeFile()
     File f(filename_);
     f.remove();
   }
+  // Also clean up a legacy (pre-"1.xfer" rename) control file if it
+  // survived a failed migration.
+  File legacy(legacyFilename());
+  if (legacy.isFile()) {
+    legacy.remove();
+  }
 }
 
 bool DefaultBtProgressInfoFile::exists()
@@ -417,10 +424,44 @@ bool DefaultBtProgressInfoFile::exists()
     A2_LOG_INFO(fmt(MSG_SEGMENT_FILE_EXISTS, filename_.c_str()));
     return true;
   }
+  else if (migrateLegacyFile()) {
+    // A pre-upgrade .aria2 control file existed and was migrated in
+    // place — resume data survives engine upgrades.
+    A2_LOG_INFO(fmt(MSG_SEGMENT_FILE_EXISTS, filename_.c_str()));
+    return true;
+  }
   else {
     A2_LOG_INFO(fmt(MSG_SEGMENT_FILE_DOES_NOT_EXIST, filename_.c_str()));
     return false;
   }
+}
+
+std::string DefaultBtProgressInfoFile::legacyFilename() const
+{
+  return dctx_->getBasePath() + ".aria2";
+}
+
+// If a legacy (pre-rename) control file exists next to the current one,
+// move it to the current name so loading continues seamlessly and the
+// stale file is cleaned up. Returns true when a migration happened.
+bool DefaultBtProgressInfoFile::migrateLegacyFile()
+{
+  File legacy(legacyFilename());
+  if (!legacy.isFile()) {
+    return false;
+  }
+  if (legacy.renameTo(filename_)) {
+    A2_LOG_INFO(fmt("Migrated legacy control file %s to %s",
+                    legacyFilename().c_str(), filename_.c_str()));
+    return true;
+  }
+  // Fall back to reading the legacy file in place (e.g. permission
+  // trouble). exists()/load() then use the legacy path via filename_.
+  A2_LOG_WARN(fmt("Could not rename legacy control file %s; reading in "
+                  "place. Reason: %s",
+                  legacyFilename().c_str(), strerror(errno)));
+  filename_ = legacyFilename();
+  return true;
 }
 
 #ifdef ENABLE_BITTORRENT

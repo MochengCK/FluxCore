@@ -57,6 +57,8 @@
 #include "a2functional.h"
 #include "fmt.h"
 #include "SocketRecvBuffer.h"
+#include "SocketLike.h"
+#include "a2functional.h"
 #include "array_fun.h"
 
 namespace aria2 {
@@ -90,7 +92,7 @@ HttpConnection::HttpConnection(
     : cuid_(cuid),
       socket_(socket),
       socketRecvBuffer_(socketRecvBuffer),
-      socketBuffer_(socket)
+      socketBuffer_(std::make_shared<TcpSocketLike>(socket))
 {
 }
 

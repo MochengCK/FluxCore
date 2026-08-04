@@ -41,6 +41,7 @@
 #include "Option.h"
 #include "BtRegistry.h"
 #include "PeerListenCommand.h"
+#include "UtpConnection.h"
 #include "TrackerWatcherCommand.h"
 #include "SeedCheckCommand.h"
 #include "PeerChokeCommand.h"
@@ -69,6 +70,12 @@
 #include "DHTMessageCallback.h"
 #include "UDPTrackerClient.h"
 #include "UPnPContext.h"
+#include "NatPmpContext.h"
+#include "UtpCommand.h"
+#include "UtpContext.h"
+#include "UtpSocketLike.h"
+#include "PeerConnection.h"
+#include "PeerReceiveHandshakeCommand.h"
 #include "BtProgressInfoFile.h"
 #include "BtAnnounce.h"
 #include "BtRuntime.h"
@@ -224,6 +231,38 @@ void BtSetup::setup(std::vector<std::unique_ptr<Command>>& commands,
     if (option->getAsBool(PREF_ENABLE_UPNP) &&
         !UPnPContext::alreadyAttempted()) {
       getUPnPContext().addPortMapping(btReg->getTcpPort());
+    }
+    // Fall back to NAT-PMP (RFC 6886) when UPnP could not map (e.g.
+    // Apple AirPort gateways that only speak NAT-PMP). Only tried when
+    // UPnP did not produce a mapping, to avoid dual mappings of the
+    // same port on gateways that support both.
+    if (option->getAsBool(PREF_ENABLE_NAT_PMP) && !getUPnPContext().isMapped() &&
+        !NatPmpContext::alreadyAttempted()) {
+      getNatPmpContext().addPortMapping(btReg->getTcpPort());
+    }
+    // uTP (BEP 29): host the transport for the whole process once.
+    if (option->getAsBool(PREF_ENABLE_UTP)) {
+      static bool utpCommandAdded = false;
+      if (!utpCommandAdded && e->getUtpContext()) {
+        utpCommandAdded = true;
+        e->addRoutineCommand(
+            make_unique<utp::UtpCommand>(e->newCUID(), e));
+        // Inbound uTP peers: on SYN, spawn the standard handshake
+        // routing command over a uTP transport. The command resolves
+        // the peer's info hash to the matching RequestGroup itself.
+        e->getUtpContext()->setAcceptHandler(
+            [e](const std::shared_ptr<utp::UtpConnection>& conn) {
+              auto peer = std::make_shared<Peer>(conn->getRemoteAddr(),
+                                                 conn->getRemotePort(),
+                                                 true /* incoming */);
+              auto peerConnection = make_unique<PeerConnection>(
+                  e->newCUID(), peer, make_unique<UtpSocketLike>(conn));
+              e->addCommand(make_unique<PeerReceiveHandshakeCommand>(
+                  e->newCUID(), peer, e, nullptr /* no TCP socket */,
+                  std::move(peerConnection)));
+            });
+        A2_LOG_INFO("uTP: transport driver installed");
+      }
     }
   }
   btAnnounce->setTcpPort(btReg->getTcpPort());

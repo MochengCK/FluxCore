@@ -44,7 +44,7 @@
 
 namespace aria2 {
 
-class SocketCore;
+class SocketLike;
 
 struct ProgressUpdate {
   virtual ~ProgressUpdate() = default;
@@ -60,7 +60,7 @@ private:
     {
     }
     virtual ~BufEntry() = default;
-    virtual ssize_t send(const std::shared_ptr<SocketCore>& socket,
+    virtual ssize_t send(const std::shared_ptr<SocketLike>& socket,
                          size_t offset) = 0;
     virtual bool final(size_t offset) const = 0;
     virtual size_t getLength() const = 0;
@@ -81,7 +81,7 @@ private:
     ByteArrayBufEntry(std::vector<unsigned char> bytes,
                       std::unique_ptr<ProgressUpdate> progressUpdate);
     virtual ~ByteArrayBufEntry();
-    virtual ssize_t send(const std::shared_ptr<SocketCore>& socket,
+    virtual ssize_t send(const std::shared_ptr<SocketLike>& socket,
                          size_t offset) CXX11_OVERRIDE;
     virtual bool final(size_t offset) const CXX11_OVERRIDE;
     virtual size_t getLength() const CXX11_OVERRIDE;
@@ -95,7 +95,7 @@ private:
   public:
     StringBufEntry(std::string s,
                    std::unique_ptr<ProgressUpdate> progressUpdate);
-    virtual ssize_t send(const std::shared_ptr<SocketCore>& socket,
+    virtual ssize_t send(const std::shared_ptr<SocketLike>& socket,
                          size_t offset) CXX11_OVERRIDE;
     virtual bool final(size_t offset) const CXX11_OVERRIDE;
     virtual size_t getLength() const CXX11_OVERRIDE;
@@ -105,7 +105,7 @@ private:
     std::string str_;
   };
 
-  std::shared_ptr<SocketCore> socket_;
+  std::shared_ptr<SocketLike> socket_;
 
   std::deque<std::unique_ptr<BufEntry>> bufq_;
 
@@ -115,7 +115,7 @@ private:
   size_t offset_;
 
 public:
-  SocketBuffer(std::shared_ptr<SocketCore> socket);
+  SocketBuffer(std::shared_ptr<SocketLike> socket);
 
   ~SocketBuffer();
 

@@ -492,6 +492,10 @@ PrefPtr PREF_ENABLE_PEER_EXCHANGE = makePref("enable-peer-exchange");
 PrefPtr PREF_ENABLE_DHT = makePref("enable-dht");
 // values: true | false
 PrefPtr PREF_ENABLE_UPNP = makePref("enable-upnp");
+// values: true | false
+PrefPtr PREF_ENABLE_NAT_PMP = makePref("enable-nat-pmp");
+// values: true | false
+PrefPtr PREF_ENABLE_UTP = makePref("enable-utp");
 // values: a string
 PrefPtr PREF_DHT_LISTEN_ADDR = makePref("dht-listen-addr");
 // values: 1*digit

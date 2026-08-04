@@ -191,6 +191,7 @@ const char TYPE_MAGNET[] = "magnet";
 const char TYPE_HTTP[] = "http";
 const char TYPE_HTTPS[] = "https";
 const char TYPE_FTP[] = "ftp";
+const char TYPE_ED2K[] = "ed2k";
 } // namespace
 
 namespace {
@@ -676,6 +677,9 @@ std::string detectTaskTypeByUri(const std::string& uri)
   }
   if (lower.compare(0, 7, "magnet:") == 0) {
     return TYPE_MAGNET;
+  }
+  if (lower.compare(0, 7, "ed2k://") == 0) {
+    return TYPE_ED2K;
   }
   return TYPE_HTTP;
 }
@@ -1752,7 +1756,12 @@ std::unique_ptr<ValueBase> GetTrackersRpcMethod::process(const RpcRequest& req,
   }
 
   auto defaultBtAnnounce = std::dynamic_pointer_cast<DefaultBtAnnounce>(btObject->btAnnounce);
-  const auto& trackerStatsMap = defaultBtAnnounce ? defaultBtAnnounce->getTrackerStatsMap() : std::map<std::string, TrackerStats>();
+  // Copy the stats map (few dozen entries) so a null btAnnounce degrades
+  // to an empty lookup instead of binding a reference to a temporary.
+  std::map<std::string, TrackerStats> trackerStatsMap;
+  if (defaultBtAnnounce) {
+    trackerStatsMap = defaultBtAnnounce->getTrackerStatsMap();
+  }
 
   // 按状态分类：working / not-working / waiting
   auto workingTrackers = List::g();

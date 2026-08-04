@@ -345,6 +345,17 @@
     "                              Opens the BitTorrent TCP listen port on the\n" \
     "                              gateway so the client is reachable from the\n" \
     "                              outside. Requires a UPnP-enabled router.")
+#define TEXT_ENABLE_NAT_PMP                                    \
+  _(" --enable-nat-pmp[=true|false] Enable NAT-PMP (RFC 6886) port mapping for NAT\n" \
+    "                              traversal. Tried when UPnP mapping fails.\n" \
+    "                              Requires a NAT-PMP-enabled gateway (e.g. Apple\n" \
+    "                              AirPort base stations).")
+#define TEXT_ENABLE_UTP                                         \
+  _(" --enable-utp[=true|false]    Enable the uTP (BEP 29) transport for peer\n" \
+    "                              connections. uTP runs over UDP with delay-based\n" \
+    "                              congestion control, improving throughput on\n" \
+    "                              lossy or congested links and on NATs that\n" \
+    "                              throttle TCP.")
 #define TEXT_DHT_LISTEN_PORT                                            \
   _(" --dht-listen-port=PORT...    Set UDP listening port used by DHT(IPv4, IPv6)\n"   \
     "                              and UDP tracker. Multiple ports can be specified\n" \
