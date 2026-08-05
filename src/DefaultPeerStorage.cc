@@ -454,9 +454,9 @@ void DefaultPeerStorage::onReturningPeer(const std::shared_ptr<Peer>& peer)
       peer->setFirstContactTime(Timer::zero());
       peer->startDrop();
       addDroppedPeer(peer);
-      const auto key = peerKey(peer->getIPAddress(), peer->getOrigPort());
-      failStats_[key] += 1;
-      tcpFailStats_[key] += 1;
+      // 优雅断连（对端正常关闭）不是连接失败，不计入
+      // failStats_/tcpFailStats_——否则 RPC 暴露的失败计数虚高，
+      // 且影响后续节点选择评分。
     }
     // Execute choking algorithm if unchoked and interested peer is
     // disconnected.

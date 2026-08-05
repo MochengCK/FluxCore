@@ -38,6 +38,7 @@
 #include "common.h"
 
 #include <cstddef>
+#include <string>
 
 namespace aria2 {
 
@@ -45,9 +46,10 @@ namespace aria2 {
 //
 // NAT-PMP is the UPnP alternative supported by Apple AirPort base
 // stations and many older routers. It is a tiny request/response
-// protocol over UDP port 5351 on the gateway's all-hosts multicast
-// address (224.0.0.1). No XML, no HTTP — a handful of fixed-layout
-// packets. The gateway answers with the port mapping result.
+// protocol over UDP port 5351 on the default gateway (unicast —
+// requests MUST go to the gateway, not multicast). No XML, no HTTP —
+// a handful of fixed-layout packets. The gateway answers with the
+// port mapping result and the assigned external port.
 //
 // Same lifecycle as UPnPContext: best-effort, hard short timeouts,
 // runs once per process (on the first BitTorrent download, after the
@@ -72,10 +74,12 @@ public:
   bool isMapped() const { return mapped_; }
 
 private:
-  // One request/response exchange over UDP 224.0.0.1:5351. Returns
-  // false on timeout/error. respLen is set to the received length.
-  bool exchange(const unsigned char* req, size_t reqLen,
-                unsigned char* resp, size_t respCap, size_t& respLen);
+  // One request/response exchange over UDP to the gateway (unicast),
+  // with RFC 6886-style retransmission. Returns false on
+  // timeout/error. respLen is set to the received length.
+  bool exchange(const std::string& gateway, const unsigned char* req,
+                size_t reqLen, unsigned char* resp, size_t respCap,
+                size_t& respLen);
 
   uint16_t mappedPort_ = 0;
   bool mapped_ = false;
