@@ -79,7 +79,11 @@ private:
     // the dispatcher, receiver and task factory. Must outlive them.
     std::shared_ptr<DHTFirewallState> firewallState;
 
-    Data() : initialized(false) {}
+    // 构造/析构都只在 DHTRegistry.cc（完整类型处）定义：GCC/clang 在
+    // 解析类定义时若看到内联构造函数会连带实例化 implicit 析构，对
+    // 不完整类型 DHTRoutingTable 等触发 unique_ptr 的 sizeof 报错。
+    Data();
+    ~Data();
   };
 
   static Data data_;
@@ -95,6 +99,11 @@ public:
   static Data& getMutableData() { return data_; }
 
   static void clearData();
+
+  // 热更新：按 family 停止 DHT 网络（IPv4/AF_INET ↔ enable-dht，
+  // IPv6/AF_INET6 ↔ enable-dht6）。非内联，实现在 DHTRegistry.cc
+  // （完整类型处），避免调用方 TU 实例化 Data 析构。
+  static void shutdown(int family);
 
   static bool isInitialized() { return data_.initialized; }
 

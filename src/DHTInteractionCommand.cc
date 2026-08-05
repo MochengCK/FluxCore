@@ -108,18 +108,9 @@ bool DHTInteractionCommand::execute()
     if (!enabled) {
       A2_LOG_INFO(fmt("DHT over %s disabled via option change, stopping",
                       family_ == AF_INET6 ? "IPv6" : "IPv4"));
-      // 只清 initialized 标志，不调 clearData()/clear()：DHTRegistry.h
-      // 仅前置声明 DHTRoutingTable 等成员类型，GCC 在调用 clearData()
-      // 的 TU 里会实例化 Data 的析构（unique_ptr 需要完整类型）导致
-      // "invalid application of sizeof to incomplete type"。
-      // registry 中残留的组件对象在下次 DHTSetup 重建时被赋值覆盖，
-      // 在 DHTRegistry.cc（含完整类型）处安全释放。
-      if (family_ == AF_INET6) {
-        DHTRegistry::setInitialized6(false);
-      }
-      else {
-        DHTRegistry::setInitialized(false);
-      }
+      // 非内联 shutdown（实现于 DHTRegistry.cc，含完整类型）：避免在
+      // 本 TU 实例化 Data 析构（GCC 对不完整类型报 sizeof 错误）。
+      DHTRegistry::shutdown(family_);
       return true;
     }
   }

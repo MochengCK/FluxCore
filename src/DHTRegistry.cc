@@ -43,12 +43,18 @@
 #include "DHTMessageReceiver.h"
 #include "DHTMessageFactory.h"
 #include "DHTMessageCallback.h"
+#include "a2netcompat.h"
 
 namespace aria2 {
 
 DHTRegistry::Data DHTRegistry::data_;
 
 DHTRegistry::Data DHTRegistry::data6_;
+
+// 构造/析构在完整类型处定义（本文件 include 了全部 DHT 类型头）。
+DHTRegistry::Data::Data() : initialized(false) {}
+
+DHTRegistry::Data::~Data() = default;
 
 void DHTRegistry::clear(DHTRegistry::Data& data)
 {
@@ -68,5 +74,15 @@ void DHTRegistry::clear(DHTRegistry::Data& data)
 void DHTRegistry::clearData() { clear(data_); }
 
 void DHTRegistry::clearData6() { clear(data6_); }
+
+void DHTRegistry::shutdown(int family)
+{
+  if (family == AF_INET6) {
+    clearData6();
+  }
+  else {
+    clearData();
+  }
+}
 
 } // namespace aria2
