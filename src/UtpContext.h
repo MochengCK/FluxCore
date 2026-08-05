@@ -72,8 +72,16 @@ public:
   UtpContext();
   ~UtpContext();
 
-  // Bind the UDP socket (ephemeral port). Returns false on failure.
-  bool start();
+  // Bind the UDP socket. port==0 uses an ephemeral port. Standard BT
+  // convention: uTP MUST listen on the same port as the TCP BT listener
+  // — remote peers send uTP SYNs to our advertised listen port. Calling
+  // with the real TCP port (from BtSetup) fixes inbound uTP; a port
+  // conflict falls back to an ephemeral port so outbound uTP still
+  // works. Idempotent: returns true if already started.
+  bool start(uint16_t port = 0);
+
+  // True once the UDP socket is bound.
+  bool isStarted() const { return started_; }
 
   // Create an outbound connection to addr:port (already in SYN_SENT
   // with the SYN queued). nullptr if not started.

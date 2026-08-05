@@ -122,12 +122,10 @@ DownloadEngine::DownloadEngine(std::unique_ptr<EventPoll> eventPoll)
   util::generateRandomKey(sessionId);
   sessionId_.assign(&sessionId[0], &sessionId[sizeof(sessionId)]);
 #ifdef ENABLE_BITTORRENT
-  // Host the uTP transport (shared UDP socket). Best-effort: if the
-  // bind fails the context is dropped and getUtpContext() returns null.
+  // 创建 uTP 传输上下文。延迟到 BtSetup 用真实 BT 监听端口启动
+  // （uTP 必须与 TCP 监听同端口，对端才可能发起入站 uTP）；这里
+  // 不提前 bind 临时端口，否则入站 uTP 永远收不到 SYN。
   utpContext_ = make_unique<utp::UtpContext>();
-  if (!utpContext_->start()) {
-    utpContext_.reset();
-  }
 #endif // ENABLE_BITTORRENT
 }
 

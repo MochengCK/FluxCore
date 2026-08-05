@@ -64,11 +64,29 @@ uint32_t UtpContext::nowUs()
       duration_cast<microseconds>(now).count() & 0xFFFFFFFF);
 }
 
-bool UtpContext::start()
+bool UtpContext::start(uint16_t port)
 {
+  if (started_) {
+    return true;
+  }
   try {
     socket_ = std::make_shared<SocketCore>(SOCK_DGRAM);
-    socket_->bindWithFamily(0, AF_INET);
+    try {
+      // 标准 BT 约定：uTP 与 TCP 监听同端口，对端才会把 uTP SYN 发到
+      // 我们通告的监听端口。绑定失败（端口被占用）时回退临时端口，
+      // 至少保证出站 uTP 可用。
+      socket_->bindWithFamily(port, AF_INET);
+    }
+    catch (RecoverableException&) {
+      if (port != 0) {
+        A2_LOG_WARN(fmt("uTP: port %u busy, falling back to ephemeral",
+                        static_cast<unsigned>(port)));
+        socket_->bindWithFamily(0, AF_INET);
+      }
+      else {
+        throw;
+      }
+    }
     socket_->setNonBlockingMode();
     started_ = true;
     A2_LOG_INFO(fmt("uTP: UDP socket bound on port %u",

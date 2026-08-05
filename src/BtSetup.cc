@@ -229,6 +229,13 @@ void BtSetup::setup(std::vector<std::unique_ptr<Command>>& commands,
     if (option->getAsBool(PREF_ENABLE_UTP)) {
       static bool utpCommandAdded = false;
       if (!utpCommandAdded && e->getUtpContext()) {
+        // 用与 TCP 监听相同的端口启动 uTP（标准 BT 约定：对端把
+        // uTP SYN 发到我们通告的监听端口）。此前在引擎构造时绑定
+        // 临时端口，入站 uTP 永远收不到 SYN——这就是"启用了 uTP
+        // 却一个 uTP 连接都没有"的直接原因。
+        if (!e->getUtpContext()->isStarted()) {
+          e->getUtpContext()->start(btReg->getTcpPort());
+        }
         utpCommandAdded = true;
         e->addRoutineCommand(
             make_unique<utp::UtpCommand>(e->newCUID(), e));
