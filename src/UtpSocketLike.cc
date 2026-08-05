@@ -55,10 +55,11 @@ ssize_t UtpSocketLike::writeVector(a2iovec* iov, size_t iovcnt)
     return -1;
   }
   // uTP sends contiguous packets; coalesce the (few, small) iovs into
-  // one buffer instead of scattering.
+  // one buffer instead of scattering. A2IOVEC_BASE/A2IOVEC_LEN abstract
+  // the POSIX iovec vs Windows WSABUF field names.
   size_t total = 0;
   for (size_t i = 0; i < iovcnt; ++i) {
-    total += iov[i].iov_len;
+    total += iov[i].A2IOVEC_LEN;
   }
   if (total == 0) {
     return 0;
@@ -66,8 +67,8 @@ ssize_t UtpSocketLike::writeVector(a2iovec* iov, size_t iovcnt)
   std::vector<unsigned char> buf(total);
   size_t off = 0;
   for (size_t i = 0; i < iovcnt; ++i) {
-    std::memcpy(buf.data() + off, iov[i].iov_base, iov[i].iov_len);
-    off += iov[i].iov_len;
+    std::memcpy(buf.data() + off, iov[i].A2IOVEC_BASE, iov[i].A2IOVEC_LEN);
+    off += iov[i].A2IOVEC_LEN;
   }
   size_t accepted = conn_->write(buf.data(), buf.size());
   return static_cast<ssize_t>(accepted);

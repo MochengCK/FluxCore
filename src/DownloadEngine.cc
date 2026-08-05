@@ -78,6 +78,8 @@
 #include "prefs.h"
 #ifdef ENABLE_BITTORRENT
 #  include "BtRegistry.h"
+#  include "UPnPContext.h"
+#  include "NatPmpContext.h"
 #endif // ENABLE_BITTORRENT
 #ifdef ENABLE_WEBSOCKET
 #  include "WebSocketSessionMan.h"
@@ -364,6 +366,38 @@ void DownloadEngine::setOption(Option* op)
   std::string statsPath = util::applyDir(configDir, "bt-stats.dat");
   btStatisticsManager_ = make_unique<BtStatisticsManager>(statsPath);
   btStatisticsManager_->load();
+
+  // NAT traversal: map the BT TCP listen port on the gateway. Runs at
+  // engine startup (before any RPC is served) so the blocking SSDP/HTTP
+  // round-trips (~1.5-7.5s worst case) never stall task creation — the
+  // old location inside BtSetup made the very first BT download trigger
+  // a multi-second engine-main-loop stall that surfaced as RPC timeouts
+  // ("fetch failed") in the app. Fired once per process; all failures
+  // are non-fatal and only logged.
+  try {
+    const std::string& listenPorts = option_->get(PREF_LISTEN_PORT);
+    auto segs = util::parseIntSegments(listenPorts);
+    if (segs.hasNext()) {
+      uint16_t btPort = static_cast<uint16_t>(segs.peek());
+      if (btPort > 0) {
+        if (option_->getAsBool(PREF_ENABLE_UPNP) &&
+            !UPnPContext::alreadyAttempted()) {
+          getUPnPContext().addPortMapping(btPort);
+        }
+        if (option_->getAsBool(PREF_ENABLE_NAT_PMP) &&
+            !getUPnPContext().isMapped() &&
+            !NatPmpContext::alreadyAttempted()) {
+          getNatPmpContext().addPortMapping(btPort);
+        }
+      }
+    }
+  }
+  catch (RecoverableException& e) {
+    A2_LOG_WARN(fmt("NAT traversal startup mapping skipped: %s", e.what()));
+  }
+  catch (std::exception& e) {
+    A2_LOG_WARN(fmt("NAT traversal startup mapping skipped: %s", e.what()));
+  }
 #endif // ENABLE_BITTORRENT
 }
 

@@ -201,10 +201,11 @@ std::string readHttpResponse(const std::shared_ptr<SocketCore>& sock,
         // Parse Content-Length from the header block.
         std::string headers = resp.substr(0, headerEnd);
         size_t pos = util::toLower(headers).find("content-length:");
-        if (pos != std::string::npos) {
+        if (pos != std::string::npos && pos + 15 <= headers.size()) {
           size_t eol = headers.find("\r\n", pos);
-          std::string val =
-              headers.substr(pos + 15, eol - (pos + 15));
+          std::string val = headers.substr(
+              pos + 15, (eol == std::string::npos ? headers.size() : eol) -
+                            (pos + 15));
           val = util::strip(val);
           try {
             contentLength = static_cast<size_t>(std::stoull(val));

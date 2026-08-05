@@ -69,8 +69,6 @@
 #include "DHTMessageFactory.h"
 #include "DHTMessageCallback.h"
 #include "UDPTrackerClient.h"
-#include "UPnPContext.h"
-#include "NatPmpContext.h"
 #include "UtpCommand.h"
 #include "UtpContext.h"
 #include "UtpSocketLike.h"
@@ -222,24 +220,11 @@ void BtSetup::setup(std::vector<std::unique_ptr<Command>>& commands,
       throw DL_ABORT_EX(_("Errors occurred while binding port.\n"));
     }
 
-    // NAT traversal: open the freshly bound TCP listen port on the
-    // gateway via UPnP-IGD, making this client reachable from the
-    // outside (more incoming peer connections → better swarm
-    // participation). Runs exactly once per process; blocked inline
-    // with hard short timeouts (~4s worst case, typically <1s). All
-    // failures are non-fatal and only logged.
-    if (option->getAsBool(PREF_ENABLE_UPNP) &&
-        !UPnPContext::alreadyAttempted()) {
-      getUPnPContext().addPortMapping(btReg->getTcpPort());
-    }
-    // Fall back to NAT-PMP (RFC 6886) when UPnP could not map (e.g.
-    // Apple AirPort gateways that only speak NAT-PMP). Only tried when
-    // UPnP did not produce a mapping, to avoid dual mappings of the
-    // same port on gateways that support both.
-    if (option->getAsBool(PREF_ENABLE_NAT_PMP) && !getUPnPContext().isMapped() &&
-        !NatPmpContext::alreadyAttempted()) {
-      getNatPmpContext().addPortMapping(btReg->getTcpPort());
-    }
+    // NAT traversal（UPnP/NAT-PMP 端口映射）已移到 DownloadEngine::setOption
+    // 在引擎启动早期执行：此处（BT 任务创建路径）不能阻塞——首次添加 BT
+    // 任务时 1.5~7.5s 的 SSDP/HTTP 等待会让引擎主线程卡死，RPC 超时表现为
+    // 前端 "fetch failed"，且任务创建流程被拖入异常窗口。
+
     // uTP (BEP 29): host the transport for the whole process once.
     if (option->getAsBool(PREF_ENABLE_UTP)) {
       static bool utpCommandAdded = false;
