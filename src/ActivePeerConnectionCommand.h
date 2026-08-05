@@ -63,6 +63,7 @@ private:
   DownloadEngine* e_;
   Timer checkPoint_;
   int numNewConnection_; // the number of the connection to establish.
+  Timer lastSlowEviction_; // throttle: evict at most one idle peer per 30s
 public:
   ActivePeerConnectionCommand(cuid_t cuid, RequestGroup* requestGroup,
                               DownloadEngine* e, std::chrono::seconds interval);
@@ -72,6 +73,11 @@ public:
   virtual bool execute() CXX11_OVERRIDE;
 
   void makeNewConnections(int num);
+
+  // 慢速节点淘汰：连接数达上限且仍需更多源时，封禁"长时间零下载"
+  // 的最差节点，为新连接腾名额。每轮最多一个，受 lastSlowEviction_
+  // 节流。
+  void evictIdlePeer();
 
   void setNumNewConnection(int numNewConnection)
   {

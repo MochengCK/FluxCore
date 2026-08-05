@@ -66,6 +66,10 @@ public:
   // Record an inbound query (request, not reply) from this IP.
   void noteInboundQuery(const std::string& ip);
 
+  // 外部可达性已被外部证据证明：收到过陌生 IP 的入站查询，或者
+  // UPnP/NAT-PMP 已成功在网关上映射了监听端口。
+  void markOpen() { open_ = true; }
+
   // True once inbound reachability has been proven.
   bool isOpen() const { return open_; }
 

@@ -65,6 +65,8 @@
 #include "DHTMessageEntry.h"
 #include "UDPTrackerClient.h"
 #include "DHTFirewallState.h"
+#include "UPnPContext.h"
+#include "NatPmpContext.h"
 #include "BtRegistry.h"
 #include "prefs.h"
 #include "Option.h"
@@ -183,6 +185,14 @@ DHTSetup::setup(DownloadEngine* e, int family)
     // (outbound destinations), the receiver (inbound queries) and the
     // peer-lookup task (announce gate).
     auto firewallState = std::make_shared<DHTFirewallState>();
+    // 外部可达性证明：UPnP/NAT-PMP 已在网关成功映射监听端口 = 端口
+    // 从公网可达。此时 DHT announce 无需再等"陌生 IP 入站查询"证据
+    // （普通 NAT 下这种证据可能永远不来，announce 会被长期跳过，
+    // 削弱 DHT 的持续发现能力），直接放行。
+    if (getUPnPContext().isMapped() || getNatPmpContext().isMapped()) {
+      firewallState->markOpen();
+      A2_LOG_INFO("DHT: NAT traversal mapping active, announce allowed");
+    }
 
     dispatcher->setTimeout(std::chrono::seconds(messageTimeout));
     dispatcher->setFirewallState(firewallState.get());

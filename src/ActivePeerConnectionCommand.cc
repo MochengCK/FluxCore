@@ -33,6 +33,7 @@
  */
 /* copyright --> */
 #include "ActivePeerConnectionCommand.h"
+#include "DefaultPeerStorage.h"
 #include "PeerInitiateConnectionCommand.h"
 #include "message.h"
 #include "DownloadEngine.h"
@@ -118,6 +119,17 @@ bool ActivePeerConnectionCommand::execute()
 
       makeNewConnections(numConnection);
 
+      // 慢速节点淘汰：连接数已达上限但下载速度仍低于阈值（即想要
+      // 更多好源却腾不出名额）时，淘汰长期零下载的最差节点。只在
+      // leecher 状态下触发，且跳过 endgame（收尾阶段每个节点都可能是
+      // 稀缺块唯一来源，不能乱杀）。
+      if (!pieceStorage_->downloadFinished() &&
+          !pieceStorage_->isEndGame() &&
+          btRuntime_->getConnections() >= btRuntime_->getMaxPeers() &&
+          stat.calculateDownloadSpeed() < thresholdSpeed) {
+        evictIdlePeer();
+      }
+
       if (btRuntime_->getConnections() == 0 &&
           !pieceStorage_->downloadFinished()) {
         btAnnounce_->overrideMinInterval(BtAnnounce::DEFAULT_ANNOUNCE_INTERVAL);
@@ -126,6 +138,40 @@ bool ActivePeerConnectionCommand::execute()
   }
   e_->addCommand(std::unique_ptr<Command>(this));
   return false;
+}
+
+void ActivePeerConnectionCommand::evictIdlePeer()
+{
+  // 节流：最多每 30 秒淘汰一个，避免连续淘汰造成连接抖动。
+  if (lastSlowEviction_.difference(global::wallclock()) < 30_s) {
+    return;
+  }
+  auto defaultPeerStorage =
+      std::dynamic_pointer_cast<DefaultPeerStorage>(peerStorage_);
+  if (!defaultPeerStorage) {
+    return;
+  }
+  const auto& usedPeers = peerStorage_->getUsedPeers();
+  const auto now = global::wallclock();
+  for (const auto& peer : usedPeers) {
+    if (!peer->isActive()) {
+      continue;
+    }
+    // 判据：接入超过 60 秒、当前下载速度为 0。
+    if (peer->calculateDownloadSpeed() != 0) {
+      continue;
+    }
+    if (now.difference(peer->getFirstContactTime()) < 60_s) {
+      continue;
+    }
+    // 封禁 IP：PeerInteractionCommand 每轮执行时会检查 isBadPeer，
+    // 命中即关闭该连接并放回节点池；封禁 2~10 分钟后节点可回归。
+    defaultPeerStorage->addBadPeer(peer->getIPAddress());
+    lastSlowEviction_ = now;
+    A2_LOG_INFO(fmt("Evicting idle peer %s:%u (0 B/s for >=60s, at peer cap)",
+                    peer->getIPAddress().c_str(), peer->getPort()));
+    return; // 每轮一个
+  }
 }
 
 void ActivePeerConnectionCommand::makeNewConnections(int num)
