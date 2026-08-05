@@ -237,6 +237,23 @@ void BtSetup::setup(std::vector<std::unique_ptr<Command>>& commands,
         // the peer's info hash to the matching RequestGroup itself.
         e->getUtpContext()->setAcceptHandler(
             [e](const std::shared_ptr<utp::UtpConnection>& conn) {
+              // MSE 加密不在 uTP 上传输（本实现中 uTP 仅承载明文
+              // Legacy 握手）。当加密策略不允许明文时（强制/自适应
+              // 加密：bt-require-crypto 或 bt-force-encryption 为真，
+              // 或 bt-min-crypto-level=arc4），拒绝入站 uTP，让对端
+              // 回退 TCP——TCP 路径会正常进行 MSE 协商。与出站 uTP
+              // 的 plainAllowed 门控保持一致。
+              const auto* opt = e->getOption();
+              const bool plainAllowed =
+                  !opt->getAsBool(PREF_BT_REQUIRE_CRYPTO) &&
+                  !opt->getAsBool(PREF_BT_FORCE_ENCRYPTION) &&
+                  opt->get(PREF_BT_MIN_CRYPTO_LEVEL) == V_PLAIN;
+              if (!plainAllowed) {
+                A2_LOG_INFO(
+                    "uTP: inbound connection rejected (encryption policy "
+                    "disallows plaintext; peer may retry over TCP)");
+                return;
+              }
               auto peer = std::make_shared<Peer>(conn->getRemoteAddr(),
                                                  conn->getRemotePort(),
                                                  true /* incoming */);
