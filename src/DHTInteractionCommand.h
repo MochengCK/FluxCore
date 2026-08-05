@@ -39,6 +39,8 @@
 
 #include <memory>
 
+#include "a2netcompat.h"
+
 namespace aria2 {
 
 class DHTMessageDispatcher;
@@ -58,6 +60,9 @@ private:
   std::shared_ptr<SocketCore> readCheckSocket_;
   std::unique_ptr<DHTConnection> connection_;
   std::shared_ptr<UDPTrackerClient> udpTrackerClient_;
+  // AF_INET / AF_INET6：热更新时按 family 对应 enable-dht / enable-dht6
+  // 决定是否停止本命令。
+  int family_ = AF_INET;
 
 public:
   DHTInteractionCommand(cuid_t cuid, DownloadEngine* e);
@@ -65,6 +70,8 @@ public:
   virtual ~DHTInteractionCommand();
 
   virtual bool execute() CXX11_OVERRIDE;
+
+  void setFamily(int family) { family_ = family; }
 
   void setReadCheckSocket(const std::shared_ptr<SocketCore>& socket);
 

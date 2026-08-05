@@ -38,6 +38,9 @@
 
 #include "DownloadEngine.h"
 #include "RecoverableException.h"
+#include "DHTRegistry.h"
+#include "prefs.h"
+#include "Option.h"
 #include "DHTMessageDispatcher.h"
 #include "DHTMessageReceiver.h"
 #include "DHTTaskQueue.h"
@@ -94,6 +97,26 @@ void DHTInteractionCommand::disableReadCheckSocket(
 
 bool DHTInteractionCommand::execute()
 {
+  // 热更新（changeGlobalOption）：enable-dht / enable-dht6 被关闭时
+  // 立即停止本 DHT 网络并退出。重新开启在下一个 BT 任务创建时由
+  // DHTSetup 重建（DHTSetup 内部检查 enable-dht / isInitialized）。
+  const auto* opt = e_->getOption();
+  if (opt) {
+    const bool enabled = family_ == AF_INET6
+                             ? opt->getAsBool(PREF_ENABLE_DHT6)
+                             : opt->getAsBool(PREF_ENABLE_DHT);
+    if (!enabled) {
+      A2_LOG_INFO(fmt("DHT over %s disabled via option change, stopping",
+                      family_ == AF_INET6 ? "IPv6" : "IPv4"));
+      if (family_ == AF_INET6) {
+        DHTRegistry::clearData6();
+      }
+      else {
+        DHTRegistry::clearData();
+      }
+      return true;
+    }
+  }
   // We need to keep this command alive while TrackerWatcherCommand
   // needs this.
   if (e_->getRequestGroupMan()->downloadFinished() ||

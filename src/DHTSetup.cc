@@ -251,6 +251,7 @@ DHTSetup::setup(DownloadEngine* e, int family)
     }
     {
       auto command = make_unique<DHTInteractionCommand>(e->newCUID(), e);
+      command->setFamily(family);
       command->setMessageDispatcher(dispatcher.get());
       command->setMessageReceiver(receiver.get());
       command->setTaskQueue(taskQueue.get());

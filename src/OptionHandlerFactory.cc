@@ -1493,6 +1493,7 @@ std::vector<OptionHandler*> OptionHandlerFactory::createOptionHandlers()
                                                OptionHandler::OPT_ARG));
     op->addTag(TAG_BITTORRENT);
     op->setInitialOption(true);
+    op->setChangeGlobalOption(true);
     handlers.push_back(op);
   }
   {
@@ -1501,6 +1502,7 @@ std::vector<OptionHandler*> OptionHandlerFactory::createOptionHandlers()
                                                OptionHandler::OPT_ARG));
     op->addTag(TAG_BITTORRENT);
     op->setInitialOption(true);
+    op->setChangeGlobalOption(true);
     handlers.push_back(op);
   }
   {
@@ -1509,6 +1511,7 @@ std::vector<OptionHandler*> OptionHandlerFactory::createOptionHandlers()
                                                OptionHandler::OPT_ARG));
     op->addTag(TAG_BITTORRENT);
     op->setInitialOption(true);
+    op->setChangeGlobalOption(true);
     handlers.push_back(op);
   }
   {
@@ -1809,6 +1812,7 @@ std::vector<OptionHandler*> OptionHandlerFactory::createOptionHandlers()
         PREF_ENABLE_DHT, TEXT_ENABLE_DHT, A2_V_TRUE, OptionHandler::OPT_ARG));
     op->addTag(TAG_BASIC);
     op->addTag(TAG_BITTORRENT);
+    op->setChangeGlobalOption(true);
     handlers.push_back(op);
   }
   {
@@ -1817,6 +1821,7 @@ std::vector<OptionHandler*> OptionHandlerFactory::createOptionHandlers()
                                                OptionHandler::OPT_ARG));
     op->addTag(TAG_BASIC);
     op->addTag(TAG_BITTORRENT);
+    op->setChangeGlobalOption(true);
     handlers.push_back(op);
   }
   {

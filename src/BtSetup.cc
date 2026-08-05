@@ -251,6 +251,14 @@ void BtSetup::setup(std::vector<std::unique_ptr<Command>>& commands,
               // 回退 TCP——TCP 路径会正常进行 MSE 协商。与出站 uTP
               // 的 plainAllowed 门控保持一致。
               const auto* opt = e->getOption();
+              // 热更新：enable-utp 被关闭时拒绝新入站 uTP 连接（出站
+              // 侧 PeerInitiateConnectionCommand 同样实时读取该选项）。
+              if (!opt->getAsBool(PREF_ENABLE_UTP)) {
+                A2_LOG_INFO(
+                    "uTP: inbound connection rejected (uTP disabled via "
+                    "option change; peer may retry over TCP)");
+                return;
+              }
               const bool plainAllowed =
                   !opt->getAsBool(PREF_BT_REQUIRE_CRYPTO) &&
                   !opt->getAsBool(PREF_BT_FORCE_ENCRYPTION) &&
