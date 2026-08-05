@@ -299,6 +299,9 @@ DHTSetup::setup(DownloadEngine* e, int family)
       DHTRegistry::getMutableData().messageDispatcher = std::move(dispatcher);
       DHTRegistry::getMutableData().messageReceiver = std::move(receiver);
       DHTRegistry::getMutableData().messageFactory = std::move(factory);
+      // Keep the firewall state alive: dispatcher/receiver/taskFactory
+      // above only hold raw pointers to it.
+      DHTRegistry::getMutableData().firewallState = std::move(firewallState);
       e->getBtRegistry()->setUDPTrackerClient(udpTrackerClient);
       DHTRegistry::setInitialized(true);
     }
@@ -313,6 +316,8 @@ DHTSetup::setup(DownloadEngine* e, int family)
       DHTRegistry::getMutableData6().messageDispatcher = std::move(dispatcher);
       DHTRegistry::getMutableData6().messageReceiver = std::move(receiver);
       DHTRegistry::getMutableData6().messageFactory = std::move(factory);
+      // Same lifetime fix for the IPv6 registry.
+      DHTRegistry::getMutableData6().firewallState = std::move(firewallState);
       DHTRegistry::setInitialized6(true);
     }
     if (e->getBtRegistry()->getUdpPort() == 0) {

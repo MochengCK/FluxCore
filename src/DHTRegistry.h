@@ -50,6 +50,7 @@ class DHTTokenTracker;
 class DHTMessageDispatcher;
 class DHTMessageReceiver;
 class DHTMessageFactory;
+class DHTFirewallState;
 
 class DHTRegistry {
 private:
@@ -73,6 +74,10 @@ private:
     std::unique_ptr<DHTMessageReceiver> messageReceiver;
 
     std::unique_ptr<DHTMessageFactory> messageFactory;
+
+    // Owns the BEP 5 firewall-check state shared (as raw pointers) by
+    // the dispatcher, receiver and task factory. Must outlive them.
+    std::shared_ptr<DHTFirewallState> firewallState;
 
     Data() : initialized(false) {}
   };

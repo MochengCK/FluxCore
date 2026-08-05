@@ -62,6 +62,7 @@ void DHTRegistry::clear(DHTRegistry::Data& data)
   data.messageDispatcher.reset();
   data.messageReceiver.reset();
   data.messageFactory.reset();
+  data.firewallState.reset();
 }
 
 void DHTRegistry::clearData() { clear(data_); }
