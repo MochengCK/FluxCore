@@ -35,6 +35,7 @@
 #include "bittorrent_helper.h"
 
 #include <cassert>
+#include <cstdio>
 #include <cstring>
 #include <algorithm>
 
@@ -87,8 +88,20 @@ const char C_COMMENT[] = "comment";
 const char C_COMMENT_UTF8[] = "comment.utf-8";
 const char C_CREATED_BY[] = "created by";
 
-const char DEFAULT_PEER_ID_PREFIX[] = "-XC0000-";
 const char DEFAULT_PEER_AGENT[] = "XferCore/" PACKAGE_VERSION;
+
+// Azureus 风格默认 peer ID 前缀：-XC{VVVV}0-（XC = XferCore，VVVV =
+// 版本 major*1000 + minor*100 + micro），与 OptionHandlerFactory 中
+// PREF_PEER_ID_PREFIX 的默认值保持一致，保证兜底路径（peerId 从未
+// 生成时）对外宣称的客户端标识也跟随引擎版本，而不是写死的旧前缀。
+std::string defaultPeerIdPrefix()
+{
+  int major = 0, minor = 0, micro = 0;
+  sscanf(PACKAGE_VERSION, "%d.%d.%d", &major, &minor, &micro);
+  char prefix[21];
+  snprintf(prefix, sizeof(prefix), "-XC%d%d%d0-", major, minor, micro);
+  return std::string(prefix);
+}
 } // namespace
 
 const std::string MULTI("multi");
@@ -721,12 +734,12 @@ void setStaticPeerAgent(const std::string& newPeerAgent)
 }
 
 // If PeerID is not generated, it is created with default peerIdPrefix
-// (-XC0000-).
+// (跟随引擎版本，如 -XC1500-).
 const unsigned char* getStaticPeerId()
 {
   if (peerId.empty()) {
     return reinterpret_cast<const unsigned char*>(
-        generateStaticPeerId(DEFAULT_PEER_ID_PREFIX).data());
+        generateStaticPeerId(defaultPeerIdPrefix()).data());
   }
   else {
     return reinterpret_cast<const unsigned char*>(peerId.data());
