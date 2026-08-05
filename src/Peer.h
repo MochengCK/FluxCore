@@ -99,6 +99,10 @@ private:
   uint64_t lastSessionDownloadLength_ = 0;
   uint64_t lastSessionSeconds_ = 0;
 
+  // 对端是否支持 uTP（BEP 29）：来自 PEX added.f 的 0x01 标志位，
+  // 或我们与它成功建立过 uTP 连接。用于出站 PEX 广播（added.f）。
+  bool utpCapable_ = false;
+
   std::string clientName_;
 
   bool fromDHT_;
@@ -141,6 +145,10 @@ public:
   // 会话时按传输类型设置。
   void setUtp(bool b) { utp_ = b; }
   bool isUtp() const { return utp_; }
+
+  // 对端 uTP 能力（BEP 11 PEX added.f 0x01 位 / 实际建立过 uTP 连接）。
+  void setUtpCapable(bool b) { utpCapable_ = b; }
+  bool isUtpCapable() const { return utpCapable_; }
 
   // 上一会话的真实统计（断开后仍可用）。
   uint64_t getLastSessionDownloadLength() const

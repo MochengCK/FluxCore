@@ -99,8 +99,12 @@ PeerInteractionCommand::PeerInteractionCommand(
       peerStorage_{peerStorage},
       sequence_{sequence}
 {
-  // uTP 传输（socket == nullptr）标记到 Peer，供 RPC 统计 TCP/uTP 比例。
+  // uTP 传输（socket == nullptr）标记到 Peer，供 RPC 统计 TCP/uTP 比例；
+  // 同时记录对端 uTP 能力（出站 PEX added.f 0x01 位广播）。
   getPeer()->setUtp(!s);
+  if (!s) {
+    getPeer()->setUtpCapable(true);
+  }
   // TODO move following bunch of processing to separate method, like init()
   if (sequence_ == INITIATOR_SEND_HANDSHAKE) {
     disableReadCheckSocket();

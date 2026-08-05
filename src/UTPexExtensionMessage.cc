@@ -104,13 +104,19 @@ UTPexExtensionMessage::createCompactPeerListAndFlag(
     unsigned char compact[COMPACT_LEN_IPV6];
     int compactlen = bittorrent::packcompact(compact, (*itr)->getIPAddress(),
                                              (*itr)->getPort());
+    // BEP 11 flags: 0x02 = seeder，0x01 = 支持 uTP（来自对端 PEX
+    // 声明或我们与其建立过 uTP 连接）。广播出去让其他客户端优先
+    // 走 uTP 连接这些节点。
+    unsigned char flags =
+        ((*itr)->isSeeder() ? 0x02u : 0x00u) |
+        ((*itr)->isUtpCapable() ? 0x01u : 0x00u);
     if (compactlen == COMPACT_LEN_IPV4) {
       addrstring.append(&compact[0], &compact[compactlen]);
-      flagstring += (*itr)->isSeeder() ? 0x02u : 0x00u;
+      flagstring += static_cast<char>(flags);
     }
     else if (compactlen == COMPACT_LEN_IPV6) {
       addrstring6.append(&compact[0], &compact[compactlen]);
-      flagstring6 += (*itr)->isSeeder() ? 0x02u : 0x00u;
+      flagstring6 += static_cast<char>(flags);
     }
   }
   return std::make_pair(
@@ -209,6 +215,8 @@ UTPexExtensionMessage::create(const unsigned char* data, size_t len)
       bittorrent::extractPeer(added, AF_INET,
                               std::back_inserter(msg->freshPeers_));
     }
+    // IPv4 节点数量：added6 的标志位要映射到其后的偏移位置。
+    const size_t v4Count = msg->freshPeers_.size();
     const String* dropped = downcast<String>(dict->get("dropped"));
     if (dropped) {
       bittorrent::extractPeer(dropped, AF_INET,
@@ -223,6 +231,31 @@ UTPexExtensionMessage::create(const unsigned char* data, size_t len)
     if (dropped6) {
       bittorrent::extractPeer(dropped6, AF_INET6,
                               std::back_inserter(msg->droppedPeers_));
+    }
+    // BEP 11 flags: added.f / added6.f 每字节对应 added/added6 中同一
+    // 序号的 peer：0x01 = 支持 uTP，0x02 = seeder。解析后标记对端 uTP
+    // 能力，供出站 PEX 广播。字节数不足/多余按 min 截断容错。
+    const String* addedF = downcast<String>(dict->get("added.f"));
+    if (addedF && !addedF->s().empty()) {
+      const size_t n = std::min(addedF->s().size(), v4Count);
+      for (size_t i = 0; i < n; ++i) {
+        if (msg->freshPeers_[i] &&
+            (static_cast<unsigned char>(addedF->s()[i]) & 0x01u)) {
+          msg->freshPeers_[i]->setUtpCapable(true);
+        }
+      }
+    }
+    const String* added6F = downcast<String>(dict->get("added6.f"));
+    if (added6F && !added6F->s().empty()) {
+      const size_t n = std::min(added6F->s().size(),
+                                msg->freshPeers_.size() - v4Count);
+      for (size_t i = 0; i < n; ++i) {
+        auto& peer = msg->freshPeers_[v4Count + i];
+        if (peer &&
+            (static_cast<unsigned char>(added6F->s()[i]) & 0x01u)) {
+          peer->setUtpCapable(true);
+        }
+      }
     }
   }
   for (auto& peer : msg->freshPeers_) {
