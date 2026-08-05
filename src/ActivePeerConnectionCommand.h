@@ -64,6 +64,7 @@ private:
   Timer checkPoint_;
   int numNewConnection_; // the number of the connection to establish.
   Timer lastSlowEviction_; // throttle: evict at most one idle peer per 30s
+  bool firstTick_ = true;  // 冷启动突发：首个 tick 一次性发起 3 倍连接
 public:
   ActivePeerConnectionCommand(cuid_t cuid, RequestGroup* requestGroup,
                               DownloadEngine* e, std::chrono::seconds interval);

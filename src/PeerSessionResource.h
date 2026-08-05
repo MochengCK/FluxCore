@@ -206,6 +206,8 @@ public:
   void setBtMessageDispatcher(BtMessageDispatcher* dpt);
 
   size_t countOutstandingUpload() const;
+  // 当前未确认的 block 请求数（向本 peer 发出的 request 流水线深度）。
+  size_t countOutstandingRequest() const;
 };
 
 } // namespace aria2

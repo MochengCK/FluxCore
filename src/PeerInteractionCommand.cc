@@ -99,6 +99,8 @@ PeerInteractionCommand::PeerInteractionCommand(
       peerStorage_{peerStorage},
       sequence_{sequence}
 {
+  // uTP 传输（socket == nullptr）标记到 Peer，供 RPC 统计 TCP/uTP 比例。
+  getPeer()->setUtp(!s);
   // TODO move following bunch of processing to separate method, like init()
   if (sequence_ == INITIATOR_SEND_HANDSHAKE) {
     disableReadCheckSocket();

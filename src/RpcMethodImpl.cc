@@ -875,12 +875,12 @@ std::string getPeerProtocolLabel(const std::shared_ptr<Peer>& peer)
     return "";
   }
   if (!peer->isActive()) {
-    return "tcp";
+    return peer->isUtp() ? "utp" : "tcp";
   }
   if (peer->isExtendedMessagingEnabled() || peer->isFastExtensionEnabled()) {
-    return "tcp-ext";
+    return peer->isUtp() ? "utp-ext" : "tcp-ext";
   }
-  return "tcp";
+  return peer->isUtp() ? "utp" : "tcp";
 }
 
 std::string getPeerSourceLabel(const std::shared_ptr<Peer>& peer)
@@ -1497,8 +1497,14 @@ std::unique_ptr<ValueBase> GetPeersRpcMethod::process(const RpcRequest& req,
       peerEntry->put(KEY_BITFIELD, "");
       peerEntry->put(KEY_DOWNLOAD_SPEED, Integer::g(0));
       peerEntry->put(KEY_UPLOAD_SPEED, Integer::g(0));
-      peerEntry->put(KEY_DOWNLOAD_LENGTH, Integer::g(0));
-      peerEntry->put(KEY_CONNECTION_TIME, Integer::g(0));
+      // 断开会话的真实统计（releaseSessionResource 时保留），
+      // 而不是硬编码 0——前端 disconnected 分组展示真实数据。
+      peerEntry->put(KEY_DOWNLOAD_LENGTH,
+                     Integer::g(static_cast<int64_t>(
+                         peer->getLastSessionDownloadLength())));
+      peerEntry->put(KEY_CONNECTION_TIME,
+                     Integer::g(static_cast<int64_t>(
+                         peer->getLastSessionSeconds())));
       peerEntry->put("attempts", Integer::g(defaultPeerStorage->getAttemptCount(
           peer->getIPAddress(), peer->getOrigPort())));
       peerEntry->put("fails", Integer::g(defaultPeerStorage->getFailCount(
@@ -1604,6 +1610,151 @@ std::unique_ptr<ValueBase> GetPeersRpcMethod::process(const RpcRequest& req,
   }
   result->put("attempting", std::move(attemptingPeers));
   
+  return std::move(result);
+}
+
+std::unique_ptr<ValueBase> GetTaskStatsRpcMethod::process(const RpcRequest& req,
+                                                          DownloadEngine* e)
+{
+  const String* gidParam = checkRequiredParam<String>(req, 0);
+  a2_gid_t gid = str2Gid(gidParam);
+  auto group = e->getRequestGroupMan()->findGroup(gid);
+  if (!group) {
+    throw DL_ABORT_EX(fmt("No task stats available for GID#%s",
+                          GroupId::toHex(gid).c_str()));
+  }
+
+  auto result = Dict::g();
+  result->put("gid", GroupId::toHex(gid));
+  const char* status = "active";
+  switch (group->getState()) {
+  case RequestGroup::STATE_WAITING:
+    status = "waiting";
+    break;
+  case RequestGroup::STATE_ACTIVE:
+    status = "active";
+    break;
+  default:
+    status = group->isPauseRequested() ? "paused" : "stopped";
+    break;
+  }
+  result->put("status", status);
+
+  // 整体速度（引擎网络统计）
+  NetStat& netStat = group->getDownloadContext()->getNetStat();
+  result->put("downloadSpeed", Integer::g(netStat.calculateDownloadSpeed()));
+  result->put("uploadSpeed", Integer::g(netStat.calculateUploadSpeed()));
+
+  auto btObject = e->getBtRegistry()->get(group->getGID());
+  if (btObject) {
+    auto pieces = Dict::g();
+    if (btObject->pieceStorage) {
+      int64_t total = btObject->pieceStorage->getTotalLength();
+      int64_t completed = btObject->pieceStorage->getCompletedLength();
+      pieces->put("totalBytes", Integer::g(total));
+      pieces->put("completedBytes", Integer::g(completed));
+      if (total > 0) {
+        pieces->put("percent", Integer::g(completed * 100 / total));
+      }
+      else {
+        pieces->put("percent", Integer::g(0));
+      }
+    }
+    result->put("pieces", std::move(pieces));
+
+    if (btObject->peerStorage) {
+      int connected = 0, downloading = 0, uploading = 0, seeding = 0,
+          idle = 0;
+      int tcp = 0, utp = 0;
+      int encrypted = 0, plaintext = 0;
+      int64_t reqTotal = 0;
+      int reqMax = 0, peersWithReq = 0;
+      int64_t peerDlSpeed = 0, peerUlSpeed = 0;
+      for (auto& peer : btObject->peerStorage->getUsedPeers()) {
+        if (!peer->isActive()) {
+          continue;
+        }
+        ++connected;
+        if (peer->isUtp()) {
+          ++utp;
+        }
+        else {
+          ++tcp;
+        }
+        if (peer->isEncrypted()) {
+          ++encrypted;
+        }
+        else {
+          ++plaintext;
+        }
+        int dl = peer->calculateDownloadSpeed();
+        int ul = peer->calculateUploadSpeed();
+        peerDlSpeed += dl;
+        peerUlSpeed += ul;
+        if (dl > 0) {
+          ++downloading;
+        }
+        else if (ul > 0) {
+          ++uploading;
+        }
+        else if (peer->isSeeder()) {
+          ++seeding;
+        }
+        else {
+          ++idle;
+        }
+        size_t o = peer->countOutstandingRequest();
+        reqTotal += o;
+        if (o > 0) {
+          ++peersWithReq;
+          reqMax = std::max<int>(reqMax, static_cast<int>(o));
+        }
+      }
+      auto peers = Dict::g();
+      peers->put("connected", Integer::g(connected));
+      peers->put("downloading", Integer::g(downloading));
+      peers->put("uploading", Integer::g(uploading));
+      peers->put("seeding", Integer::g(seeding));
+      peers->put("idle", Integer::g(idle));
+      auto defaultPeerStorage =
+          std::dynamic_pointer_cast<DefaultPeerStorage>(btObject->peerStorage);
+      if (defaultPeerStorage) {
+        peers->put("attempting",
+                   Integer::g(static_cast<int64_t>(
+                       defaultPeerStorage->getUnusedPeers().size())));
+        peers->put("disconnected",
+                   Integer::g(static_cast<int64_t>(
+                       defaultPeerStorage->getDroppedPeers().size())));
+        peers->put("banned", Integer::g(static_cast<int64_t>(
+                                 defaultPeerStorage->getBadPeers().size())));
+      }
+      result->put("peers", std::move(peers));
+
+      auto transport = Dict::g();
+      transport->put("tcp", Integer::g(tcp));
+      transport->put("utp", Integer::g(utp));
+      result->put("transport", std::move(transport));
+
+      auto encryption = Dict::g();
+      encryption->put("encrypted", Integer::g(encrypted));
+      encryption->put("plaintext", Integer::g(plaintext));
+      result->put("encryption", std::move(encryption));
+
+      auto requests = Dict::g();
+      requests->put("outstandingTotal", Integer::g(reqTotal));
+      requests->put("outstandingAvg",
+                    Integer::g(connected > 0 ? reqTotal / connected : 0));
+      requests->put("outstandingMax", Integer::g(reqMax));
+      requests->put("peersWithRequests", Integer::g(peersWithReq));
+      result->put("requests", std::move(requests));
+
+      auto speed = Dict::g();
+      speed->put("download", Integer::g(peerDlSpeed));
+      speed->put("upload", Integer::g(peerUlSpeed));
+      result->put("peerSpeed", std::move(speed));
+    }
+  }
+
   return std::move(result);
 }
 

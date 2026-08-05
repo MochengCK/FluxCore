@@ -69,6 +69,9 @@ PeerReceiveHandshakeCommand::PeerReceiveHandshakeCommand(
     : PeerAbstractCommand{cuid, peer, e, s},
       peerConnection_{std::move(peerConnection)}
 {
+  // uTP 传输（socket == nullptr，仅入站 uTP 路径）标记到 Peer，
+  // 供 RPC 统计 TCP/uTP 比例。
+  getPeer()->setUtp(!s);
   if (peerConnection_) {
     if (peerConnection_->getBufferLength() > 0) {
       setStatus(Command::STATUS_ONESHOT_REALTIME);

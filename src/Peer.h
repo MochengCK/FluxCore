@@ -88,6 +88,17 @@ private:
   // If true, this peer is disconnected gracefully.
   bool disconnectedGracefully_;
 
+  // If true, this peer's BT 会话运行在 uTP (BEP 29) 传输上（uTP 不
+  // 走 MSE，且出站/入站均在此标记）。RPC getPeers/getTaskStats 用
+  // 它区分 TCP/uTP 连接比例。
+  bool utp_;
+
+  // 断开时保留的本会话真实统计（releaseSessionResource 时捕获），
+  // 供 RPC getPeers 的 disconnected 分组展示真实数据，避免前端显示
+  // 硬编码 0。
+  uint64_t lastSessionDownloadLength_ = 0;
+  uint64_t lastSessionSeconds_ = 0;
+
   std::string clientName_;
 
   bool fromDHT_;
@@ -125,6 +136,18 @@ public:
   const unsigned char* getPeerId() const { return peerId_; }
 
   bool isSeeder() const { return seeder_; }
+
+  // uTP (BEP 29) 传输标记：PeerInteractionCommand/握手命令在创建
+  // 会话时按传输类型设置。
+  void setUtp(bool b) { utp_ = b; }
+  bool isUtp() const { return utp_; }
+
+  // 上一会话的真实统计（断开后仍可用）。
+  uint64_t getLastSessionDownloadLength() const
+  {
+    return lastSessionDownloadLength_;
+  }
+  uint64_t getLastSessionSeconds() const { return lastSessionSeconds_; }
 
   void startDrop();
 
@@ -290,6 +313,9 @@ public:
   void setBtMessageDispatcher(BtMessageDispatcher* dpt);
 
   size_t countOutstandingUpload() const;
+
+  // 当前未确认的 block 请求数（请求流水线深度），用于 RPC 统计。
+  size_t countOutstandingRequest() const;
 
   bool isEncrypted() const;
 

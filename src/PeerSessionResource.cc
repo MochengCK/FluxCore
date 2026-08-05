@@ -234,6 +234,11 @@ size_t PeerSessionResource::countOutstandingUpload() const
   return dispatcher_->countOutstandingUpload();
 }
 
+size_t PeerSessionResource::countOutstandingRequest() const
+{
+  return dispatcher_ ? dispatcher_->countOutstandingRequest() : 0;
+}
+
 void PeerSessionResource::reconfigure(int32_t pieceLength, int64_t totalLenth)
 {
   bitfieldMan_ = make_unique<BitfieldMan>(pieceLength, totalLenth);

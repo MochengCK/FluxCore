@@ -57,6 +57,7 @@ Peer::Peer(std::string ipaddr, uint16_t port, bool incoming)
       incoming_(incoming),
       localPeer_(false),
       disconnectedGracefully_(false),
+      utp_(false),
       fromDHT_(false),
       fromPEX_(false)
 {
@@ -80,7 +81,20 @@ void Peer::reconfigureSessionResource(int32_t pieceLength, int64_t totalLength)
   res_->reconfigure(pieceLength, totalLength);
 }
 
-void Peer::releaseSessionResource() { res_.reset(); }
+void Peer::releaseSessionResource()
+{
+  // 断开前保留本会话的真实统计，供 RPC getPeers 的 disconnected
+  // 分组展示（否则会话数据随 res_ 一起丢失，前端只能显示硬编码 0，
+  // 属于"显示非真实数据"）。
+  if (res_) {
+    lastSessionDownloadLength_ = res_->downloadLength();
+    const auto now = global::wallclock();
+    auto diff = firstContactTime_.difference(now);
+    lastSessionSeconds_ = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::seconds>(diff).count());
+  }
+  res_.reset();
+}
 
 void Peer::setPeerId(const unsigned char* peerId)
 {
@@ -394,6 +408,11 @@ size_t Peer::countOutstandingUpload() const
 {
   assert(res_);
   return res_->countOutstandingUpload();
+}
+
+size_t Peer::countOutstandingRequest() const
+{
+  return res_ ? res_->countOutstandingRequest() : 0;
 }
 
 bool Peer::isEncrypted() const

@@ -276,6 +276,17 @@ public:
   static const char* getMethodName() { return "aria2.getPeers"; }
 };
 
+// 任务级聚合统计（性能对比工具用）：节点数/状态分布、TCP vs uTP、
+// 加密 vs 明文、请求流水线深度（总/均值/最大）、piece 进度、速度。
+class GetTaskStatsRpcMethod : public RpcMethod {
+protected:
+  virtual std::unique_ptr<ValueBase> process(const RpcRequest& req,
+                                             DownloadEngine* e) CXX11_OVERRIDE;
+
+public:
+  static const char* getMethodName() { return "aria2.getTaskStats"; }
+};
+
 class BanPeerRpcMethod : public RpcMethod {
 protected:
   virtual std::unique_ptr<ValueBase> process(const RpcRequest& req,

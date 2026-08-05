@@ -96,6 +96,10 @@ bool ActivePeerConnectionCommand::execute()
     if (maxDownloadLimit > 0) {
       thresholdSpeed = std::min(maxDownloadLimit, thresholdSpeed);
     }
+    // 冷启动突发：首个 tick 一次性发起 3 倍连接（10 → 30），让
+    // 下载快速起速；后续回到常规速率。
+    int connBurst = firstTick_ ? numNewConnection_ * 3 : numNewConnection_;
+    firstTick_ = false;
     if ( // for seeder state
         (pieceStorage_->downloadFinished() && btRuntime_->lessThanMaxPeers() &&
          (maxUploadLimit == 0 ||
@@ -109,12 +113,12 @@ bool ActivePeerConnectionCommand::execute()
       if (pieceStorage_->downloadFinished()) {
         if (btRuntime_->getMaxPeers() > btRuntime_->getConnections()) {
           numConnection =
-              std::min(numNewConnection_, btRuntime_->getMaxPeers() -
-                                              btRuntime_->getConnections());
+              std::min(connBurst, btRuntime_->getMaxPeers() -
+                                      btRuntime_->getConnections());
         }
       }
       else {
-        numConnection = numNewConnection_;
+        numConnection = connBurst;
       }
 
       makeNewConnections(numConnection);
