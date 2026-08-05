@@ -35,6 +35,7 @@
 #include "UtpCommand.h"
 
 #include "DownloadEngine.h"
+#include "RequestGroupMan.h"
 #include "UtpContext.h"
 
 namespace aria2 {
@@ -49,6 +50,13 @@ bool UtpCommand::execute()
 {
   auto ctx = e_->getUtpContext();
   if (!ctx) {
+    return true;
+  }
+  // 与 PeerListenCommand / DHTInteractionCommand 一致的退出条件：
+  // 引擎停机或全部任务结束时必须退出，否则 routineCommands_ 永不为
+  // 空，DownloadEngine 主循环无法结束（引擎无法正常停机）。
+  if (e_->isHaltRequested() ||
+      e_->getRequestGroupMan()->downloadFinished()) {
     return true;
   }
   // Advance all connections (timers / CC / retransmit / sends) and

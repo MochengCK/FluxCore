@@ -208,10 +208,18 @@ private:
   uint32_t lastAckUs_ = 0;     // for dup-ack detection
   uint16_t lastAckNr_ = 0;
   unsigned dupAckCount_ = 0;
+  // 快速重传去重：对同一个丢失包只减半一次 cwnd（RFC 5681 每轮
+  // 恢复至多降一次）。记录最近一次触发快速重传的包序号。
+  uint16_t lastFastRecoverySeq_ = 0;
+  bool fastRecoveryValid_ = false;
 
   // --- timestamps echoed from peer ---
   uint32_t lastPeerTs_ = 0;   // timestamp field of last received packet
   uint32_t replyMicro_ = 0;   // ts we put in the last packet we sent
+  // BEP 29 timestamp_difference：在"收到对端包的时刻"冻结的
+  // (本地收包时刻 - 对端包内时间戳)，随我方下一个包回显。两个值
+  // 都是本地时钟域，差值用于对端的单向延迟估计（LEDBAT）。
+  uint32_t tsDiffEcho_ = 0;
 
   // --- outbox ---
   std::vector<std::vector<unsigned char>> outbox_;

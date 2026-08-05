@@ -77,8 +77,9 @@ bool parsePacket(const unsigned char* data, size_t len, PacketHeader& header,
   if (len < HEADER_LEN) {
     return false;
   }
-  header.type = data[0] & 0x0F;
-  header.version = (data[0] >> 4) & 0x0F;
+  // BEP 29: first byte is (type << 4) | version.
+  header.type = (data[0] >> 4) & 0x0F;
+  header.version = data[0] & 0x0F;
   if (header.version != PROTOCOL_VERSION) {
     return false;
   }
@@ -114,8 +115,8 @@ bool parsePacket(const unsigned char* data, size_t len, PacketHeader& header,
 void encodeHeader(unsigned char* out, const PacketHeader& header)
 {
   std::memset(out, 0, HEADER_LEN);
-  out[0] = static_cast<unsigned char>((header.type & 0x0F) |
-                                      ((header.version & 0x0F) << 4));
+  out[0] = static_cast<unsigned char>(((header.type & 0x0F) << 4) |
+                                      (header.version & 0x0F));
   out[1] = header.extension;
   writeBe16(out + 2, header.connectionId);
   writeBe32(out + 4, header.timestamp);

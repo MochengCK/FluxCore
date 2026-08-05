@@ -141,6 +141,12 @@ UtpConnection::~UtpConnection() = default;
 size_t UtpConnection::write(const unsigned char* data, size_t len)
 {
   wantWrite_ = false;
+  // 连接已关闭/出错：拒绝写入并返回 0（wantWrite 保持 false），
+  // 让上层（SocketBuffer::send）按"连接已关闭"处理，而不是静默
+  // 吞掉最多 1MB 数据成为黑洞。
+  if (state_ == State::CLOSED || error_) {
+    return 0;
+  }
   // Bound the user-side buffer so a stuck peer cannot balloon memory.
   // Data actually leaves this buffer as soon as the CC window allows.
   constexpr size_t MAX_PENDING = 1024 * 1024;
@@ -148,6 +154,11 @@ size_t UtpConnection::write(const unsigned char* data, size_t len)
   while (accepted < len && pendingSend_.size() < MAX_PENDING) {
     pendingSend_.push_back(data[accepted]);
     ++accepted;
+  }
+  if (accepted < len) {
+    // 用户侧缓冲已满：属于 EAGAIN 语义——CC 窗口腾空后可继续写。
+    // 必须置 wantWrite_，否则上层会把"部分写后写不动"误判为连接关闭。
+    wantWrite_ = true;
   }
   return accepted;
 }
@@ -160,6 +171,14 @@ size_t UtpConnection::read(unsigned char* data, size_t cap)
     data[n] = recvOut_.front();
     recvOut_.pop_front();
     ++n;
+  }
+  if (n == 0 && recvOut_.empty() && !eofReceived() && !isClosed() &&
+      !hasError()) {
+    // 缓冲区暂时为空但连接仍存活：EAGAIN 语义（置 wantRead_），
+    // 不是 EOF。真正的 EOF 由 eofReceived()/isClosed()/hasError()
+    // 表达——否则 BT 层（PeerConnection::receiveMessage）会在每次
+    // 读空缓冲时误判对端关闭而断开连接。
+    wantRead_ = true;
   }
   return n;
 }
@@ -180,17 +199,22 @@ void UtpConnection::handlePacket(const unsigned char* data, size_t len,
   lastRecvUs_ = nowUs;
   consecutiveTimeouts_ = 0;
   // Timestamp bookkeeping for RTT/delay measurement.
-  uint32_t tsDiff = hdr.timestampDiff;
+  // BEP 29：timestamp_difference 必须在收包时刻冻结为
+  // (本地收包时刻 - 对端包内时间戳)，随我方下一个包原样回显；
+  // 单向延迟样本同样是本地时钟域的 (now - 对端时间戳)，时钟偏移
+  // 由 baseDelay 的最小值过滤消除。此前把对端时钟减本地发送时刻
+  // （混用两个时钟域，uint32 下溢后为天文数字），LEDBAT 延迟样本
+  // 全是垃圾，cwnd 实际无反馈增长。
   lastPeerTs_ = hdr.timestamp;
-  peerWnd_ = hdr.wndSize ? hdr.wndSize : peerWnd_;
-  if (hdr.type != ST_SYN && replyMicro_ != 0) {
-    // rtt = (now - ts of our last sent packet) + peer's ts_diff
-    updateRtt((nowUs - replyMicro_) + tsDiff);
-    // one-way delay sample (echoed by the peer)
-    if (tsDiff != 0) {
-      updateDelay(tsDiff, nowUs);
-    }
+  tsDiffEcho_ = nowUs - hdr.timestamp;
+  // 对端通告 0 窗口是合法且关键的流控信号（收缓冲满），不能当成
+  // "未通告"忽略——否则我们会持续向已满缓冲发包，造成丢包恶性循环。
+  peerWnd_ = hdr.wndSize;
+  if (hdr.type != ST_SYN) {
+    updateDelay(tsDiffEcho_, nowUs);
   }
+  // RTT 样本只取自 onAck 中"我方包发送时刻 → 收到其 ACK 时刻"，
+  // 不做跨时钟域的 RTT 估算。
 
   uint32_t sackBits = 0;
   for (auto& e : exts) {
@@ -246,8 +270,11 @@ void UtpConnection::handlePacket(const unsigned char* data, size_t len,
       onData(hdr, payload, payloadLen, nowUs);
     }
     else {
-      // ST_FIN: record the EOF packet number and ack it.
-      if (seqAfter(hdr.seqNr, ack_) && !eof_) {
+      // ST_FIN: FIN 占用一个序列号。按序到达时推进 ack_（累计确认
+      // 包含 FIN），否则对端永远收不到 FIN 的确认而重传到超时；
+      // 乱序 FIN 等数据补齐后由对端重传处理。
+      if (hdr.seqNr == static_cast<uint16_t>(ack_ + 1) && !eof_) {
+        ack_ = hdr.seqNr;
         eof_ = true;
         eofPkt_ = hdr.seqNr;
       }
@@ -297,6 +324,13 @@ void UtpConnection::onData(const PacketHeader& hdr, const unsigned char* payload
   else {
     // Out of order: buffer for SACK + later drain. Bound by window.
     if (recvBuffered_ + payloadLen <= RECV_WINDOW) {
+      // 同一 seq 的重复乱序包：先扣除旧 entry 的字节数，否则
+      // recvBuffered_ 只增不减，通告窗口会随重传单调收缩到 0。
+      auto dup = recvReorder_.find(s);
+      if (dup != recvReorder_.end()) {
+        recvBuffered_ -= static_cast<uint32_t>(dup->second.payload.size());
+        recvReorder_.erase(dup);
+      }
       InPacket ip;
       ip.payload.assign(payload, payload + payloadLen);
       ip.receivedAtUs = nowUs;
@@ -351,6 +385,12 @@ void UtpConnection::onAck(uint16_t ackNr, uint32_t sackBits, uint32_t nowUs)
     updateWindow(nowUs);
     wantWrite_ = true; // window freed; try flushing in processTick
   }
+  // FIN 不进入 sendQueue_（由 queueControl 直发），其确认只能通过
+  // 累计 ack_nr 判定——否则 finAcked_ 永不置位，优雅关闭退化为双向
+  // 超时。
+  if (finSent_ && !finAcked_ && seqLeq(finSeq_, ackNr)) {
+    finAcked_ = true;
+  }
 
   // Fast retransmit: oldest unacked + >= 3 SACK'd packets after it.
   if (!sendQueue_.empty()) {
@@ -365,10 +405,15 @@ void UtpConnection::onAck(uint16_t ackNr, uint32_t sackBits, uint32_t nowUs)
         }
       }
     }
-    if (oldestUnacked && sacksAfter >= 3) {
+    if (oldestUnacked && sacksAfter >= 3 &&
+        !(fastRecoveryValid_ && lastFastRecoverySeq_ == oldest)) {
       // Retransmit the oldest packet and halve the cwnd (per spec).
+      // 同一个丢失包只减半一次——连续 SACK 会在几个 ACK 内把 cwnd
+      // 打到下限。
       retransmitPacket(sendQueue_.front(), nowUs);
       maxWindow_ = std::max<uint32_t>(maxWindow_ / 2, packetSize_);
+      lastFastRecoverySeq_ = oldest;
+      fastRecoveryValid_ = true;
     }
   }
   // 3 duplicate acks on ack_nr+1 -> fast retransmit that packet.
@@ -376,8 +421,12 @@ void UtpConnection::onAck(uint16_t ackNr, uint32_t sackBits, uint32_t nowUs)
     uint16_t target = static_cast<uint16_t>(ackNr + 1);
     for (auto& p : sendQueue_) {
       if (p.seq == target) {
-        retransmitPacket(p, nowUs);
-        maxWindow_ = std::max<uint32_t>(maxWindow_ / 2, packetSize_);
+        if (!(fastRecoveryValid_ && lastFastRecoverySeq_ == target)) {
+          retransmitPacket(p, nowUs);
+          maxWindow_ = std::max<uint32_t>(maxWindow_ / 2, packetSize_);
+          lastFastRecoverySeq_ = target;
+          fastRecoveryValid_ = true;
+        }
         break;
       }
     }
@@ -410,14 +459,26 @@ void UtpConnection::processTick(uint32_t nowUs)
     else {
       state_ = State::FIN_SENT;
     }
-    queueControl(ST_FIN, nowUs, finSeq_);
+    // 第三个参数传 0：queueControl 会用 ack_ 填 ack_nr。传 finSeq_
+    // 会把我方 FIN 的序号写进 ack_nr，对端会误读为"自己的包已被
+    // 累计确认"。
+    queueControl(ST_FIN, nowUs, 0);
     if (state_ == State::CLOSED) {
       return;
     }
   }
 
   // RTO / handshake timeout.
-  if (lastRecvUs_ != 0 || state_ == State::SYN_SENT) {
+  // BEP 29：RTO 只用于重传未确认数据（或握手/FIN 未完成）。已建立且
+  // 无在途数据的空闲连接永远不应因静默被判死——uTP 没有 keepalive，
+  // 空闲是常态（对端 choke 我们、本地暂不缺块等）。此前任何静默都会
+  // 累计超时，导致空闲约 1.5×RTO 后连接被强杀。
+  const bool finInFlight =
+      finSent_ && !finAcked_ && state_ == State::FIN_SENT;
+  const bool needRto = state_ == State::SYN_SENT ||
+                       (lastRecvUs_ != 0 &&
+                        (!sendQueue_.empty() || finInFlight));
+  if (needRto) {
     uint32_t sinceLast = state_ == State::SYN_SENT
                              ? (nowUs - lastSendUs_)
                              : (nowUs - lastRecvUs_);
@@ -487,6 +548,11 @@ void UtpConnection::handleTimeout(uint32_t nowUs)
   maxWindow_ = packetSize_;
   lastRecvUs_ = nowUs; // arm the next timeout period
   retransmitUnacked(nowUs);
+  // FIN 不在 sendQueue_ 中，retransmitUnacked 不会重发它——FIN 丢失
+  // 时必须在 RTO 路径单独重传，否则优雅关闭卡死在 FIN_SENT。
+  if (finSent_ && !finAcked_ && state_ == State::FIN_SENT) {
+    queueControl(ST_FIN, nowUs, 0);
+  }
 }
 
 void UtpConnection::retransmitPacket(OutPacket& p, uint32_t nowUs)
@@ -498,7 +564,7 @@ void UtpConnection::retransmitPacket(OutPacket& p, uint32_t nowUs)
   h.type = ST_DATA;
   h.connectionId = sendId_;
   h.timestamp = nowUs;
-  h.timestampDiff = lastPeerTs_ - replyMicro_;
+  h.timestampDiff = tsDiffEcho_;
   h.wndSize = advertsiedWnd();
   h.seqNr = p.seq;
   h.ackNr = ack_;
@@ -519,7 +585,7 @@ void UtpConnection::retransmitUnacked(uint32_t nowUs)
     h.type = ST_DATA;
     h.connectionId = sendId_;
     h.timestamp = nowUs;
-    h.timestampDiff = lastPeerTs_ - replyMicro_;
+    h.timestampDiff = tsDiffEcho_;
     h.wndSize = advertsiedWnd();
     h.seqNr = p.seq;
     h.ackNr = ack_;
@@ -542,9 +608,17 @@ void UtpConnection::updateRtt(uint32_t packetRttUs)
     int64_t delta = static_cast<int64_t>(rtt_) - packetRttUs;
     int64_t absDelta = delta < 0 ? -delta : delta;
     rttVar_ = static_cast<uint32_t>(rttVar_ + ((absDelta - rttVar_) / 4));
-    rtt_ = static_cast<uint32_t>(rtt_ + ((packetRttUs - rtt_) / 8));
+    // 必须用有符号运算：样本小于均值时无符号减法会下溢到 ~2^32，
+    // 使 rtt_ 暴涨至数分钟量级（RFC 6298 的 EWMA 语义）。
+    rtt_ = static_cast<uint32_t>(static_cast<int64_t>(rtt_) +
+                                 ((static_cast<int64_t>(packetRttUs) -
+                                   static_cast<int64_t>(rtt_)) /
+                                  8));
   }
-  timeout_ = std::max<uint32_t>(rtt_ + 4 * rttVar_, RTO_MIN_US);
+  // RTO 需要上下限：下限防止过于激进的重传，上限防止异常样本把
+  // 丢包恢复停滞数分钟。
+  timeout_ = std::min<uint32_t>(
+      std::max<uint32_t>(rtt_ + 4 * rttVar_, RTO_MIN_US), RTO_MAX_US);
 }
 
 void UtpConnection::updateDelay(uint32_t sampleUs, uint32_t nowUs)
@@ -599,7 +673,7 @@ void UtpConnection::queueDataPacket(OutPacket&& op, uint32_t nowUs)
   h.type = ST_DATA;
   h.connectionId = sendId_;
   h.timestamp = nowUs;
-  h.timestampDiff = lastPeerTs_ - replyMicro_;
+  h.timestampDiff = tsDiffEcho_;
   h.wndSize = advertsiedWnd();
   h.seqNr = op.seq;
   h.ackNr = ack_;
@@ -630,7 +704,7 @@ void UtpConnection::queueControl(uint8_t type, uint32_t nowUs,
   h.type = type;
   h.connectionId = connId;
   h.timestamp = nowUs;
-  h.timestampDiff = lastPeerTs_ - replyMicro_;
+  h.timestampDiff = tsDiffEcho_;
   h.wndSize = advertsiedWnd();
   h.seqNr = seqField;
   h.ackNr = seqForAck == 0 ? ack_ : seqForAck;

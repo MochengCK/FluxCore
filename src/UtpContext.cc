@@ -87,9 +87,16 @@ std::shared_ptr<UtpConnection> UtpContext::connect(const std::string& addr, uint
   if (!started_) {
     return nullptr;
   }
-  auto conn = std::make_shared<UtpConnection>(addr, port, nowUs());
-  connections_.emplace(conn->getRecvId(), conn);
-  return conn;
+  // recvId 来自随机数：同微秒多次 connect 或与既有连接撞 id 时，
+  // emplace 会静默失败（连接不在注册表，其 SYN 永远发不出去）。
+  // 必须重试直至注册成功。
+  for (int attempt = 0; attempt < 8; ++attempt) {
+    auto conn = std::make_shared<UtpConnection>(addr, port, nowUs());
+    if (connections_.emplace(conn->getRecvId(), conn).second) {
+      return conn;
+    }
+  }
+  return nullptr;
 }
 
 void UtpContext::processTick()
@@ -104,18 +111,10 @@ void UtpContext::processTick()
     kv.second->processTick(now);
   }
 
-  // 2. Remove dead connections.
-  for (auto it = connections_.begin(); it != connections_.end();) {
-    auto& conn = it->second;
-    if (conn->isClosed() || conn->hasError()) {
-      it = connections_.erase(it);
-    }
-    else {
-      ++it;
-    }
-  }
-
-  // 3. Flush outboxes over the shared UDP socket.
+  // 2. Flush outboxes over the shared UDP socket. 必须在删除死连接
+  // 之前执行：本 tick 刚 CLOSED 的连接其 outbox 里可能还有最后一
+  // 包（如对端 FIN 的最终 ACK），先删后 flush 会把它丢掉，导致对端
+  // 重传 FIN 直至超时。
   for (auto& kv : connections_) {
     auto& conn = kv.second;
     std::vector<std::vector<unsigned char>> out;
@@ -123,6 +122,17 @@ void UtpContext::processTick()
     for (auto& pkt : out) {
       sendDatagram(pkt.data(), pkt.size(), conn->getRemoteAddr(),
                    conn->getRemotePort());
+    }
+  }
+
+  // 3. Remove dead connections.
+  for (auto it = connections_.begin(); it != connections_.end();) {
+    auto& conn = it->second;
+    if (conn->isClosed() || conn->hasError()) {
+      it = connections_.erase(it);
+    }
+    else {
+      ++it;
     }
   }
 }
@@ -153,6 +163,13 @@ void UtpContext::receiveLoop()
     }
 
     UtpConnection* conn = find(hdr.connectionId);
+    if (!conn && hdr.type == ST_SYN) {
+      // SYN 重发：入站连接注册在 peerRecvId+1（我们的 recvId），而
+      // 重发的 SYN 仍携带 peerRecvId → find 必然 miss。改查 id+1，
+      // 命中即同一连接的重发 SYN，交给既有连接重发 SYN-ACK，而不是
+      // 重复建连、重复回调 acceptHandler（会产生僵尸握手命令）。
+      conn = find(static_cast<uint16_t>(hdr.connectionId + 1));
+    }
     if (conn) {
       conn->handlePacket(buf, static_cast<size_t>(n), nowUs());
       continue;
@@ -162,7 +179,11 @@ void UtpContext::receiveLoop()
     if (hdr.type == ST_SYN) {
       auto incoming = std::make_shared<UtpConnection>(
           sender.addr, sender.port, hdr.connectionId, hdr.seqNr, nowUs());
-      connections_.emplace(incoming->getRecvId(), incoming);
+      // 注册失败（recvId 冲突）时不能回调 acceptHandler，否则会产生
+      // 一个永不被 tick 的僵尸连接。
+      if (!connections_.emplace(incoming->getRecvId(), incoming).second) {
+        continue;
+      }
       A2_LOG_INFO(fmt("uTP: accepted inbound SYN from %s:%u (recvId=%u)",
                       sender.addr.c_str(), sender.port,
                       static_cast<unsigned>(incoming->getRecvId())));

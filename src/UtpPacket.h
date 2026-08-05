@@ -46,8 +46,8 @@ namespace utp {
 // uTP protocol constants and packet (de)serialization, per BEP 29.
 //
 // The fixed header is 20 bytes, BIG-endian (network order):
-//   bit 0-3   type       0=ST_DATA 1=ST_FIN 2=ST_STATE 3=ST_RESET 4=ST_SYN
-//   bit 4-7   version    =1
+//   bit 4-7   type       0=ST_DATA 1=ST_FIN 2=ST_STATE 3=ST_RESET 4=ST_SYN
+//   bit 0-3   version    =1
 //   byte 1    extension  first extension type (0 = none)
 //   bytes 2-3 connection_id  (sender's receive id; SYN carries it too)
 //   bytes 4-7 timestamp_microseconds
