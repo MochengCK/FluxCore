@@ -46,6 +46,15 @@ UtpCommand::UtpCommand(cuid_t cuid, DownloadEngine* e) : Command{cuid}, e_{e}
   setStatusRealtime();
   if (auto* ctx = e_->getUtpContext()) {
     ctx->setCommandAlive(true);
+    // 把共享 UDP socket 注册进引擎事件循环。此前 uTP 数据只能靠
+    // routine command 的 1s 轮询（DEFAULT_REFRESH_INTERVAL）处理，
+    // 每个 uTP 往返至少 1s，SYN/BT 握手与 piece 数据吞吐被压到每秒
+    // 一轮——表现为大量 peer 卡在握手、BT 下载永远没速度。注册读
+    // 事件后，对端 SYN-ACK/数据包一到达，主循环 poll 立即返回并驱动
+    // 本命令 receiveLoop() 及时排水。
+    if (ctx->isStarted()) {
+      e_->addSocketForReadCheck(ctx->getSocket(), this);
+    }
   }
 }
 
@@ -55,6 +64,10 @@ UtpCommand::~UtpCommand()
   // BT 任务时重建 UtpCommand，恢复 processTick/receiveLoop 泵送。
   if (auto* ctx = e_->getUtpContext()) {
     ctx->setCommandAlive(false);
+    // 注销 UDP socket 读事件，避免命令销毁后事件循环持有悬垂指针。
+    if (ctx->getSocket()) {
+      e_->deleteSocketForReadCheck(ctx->getSocket(), this);
+    }
   }
 }
 
