@@ -96,10 +96,18 @@ bool PeerInitiateConnectionCommand::executeInternal()
   // 永远只能显示 TCP/tcp-ext。
   bool plainAllowed = !opt->getAsBool(PREF_BT_REQUIRE_CRYPTO) &&
                       !opt->getAsBool(PREF_BT_FORCE_ENCRYPTION);
-  if (utpCtx && opt->getAsBool(PREF_ENABLE_UTP) && plainAllowed) {
+  // 每个 peer 只尝试一次出站 uTP：uTP 是无连接 UDP 传输，connect()
+  // 总能"成功"返回（SYN/SYN-ACK 尚未完成）。若对端不支持 uTP 或 NAT
+  // 丢弃 UDP，uTP 会在 ~15s 后超时失败，peer 被 returnPeer 后重新
+  // checkout 又会走 uTP、再次失败，形成"死连接"死循环（节点表格里
+  // 全是无速度、无 peerId 的 µTP 节点）。标记 utpTried 后，失败的下
+  // 一次 checkout 直接走 TCP。
+  if (utpCtx && opt->getAsBool(PREF_ENABLE_UTP) && plainAllowed &&
+      !getPeer()->hasUtpTried()) {
     auto conn =
         utpCtx->connect(getPeer()->getIPAddress(), getPeer()->getPort());
     if (conn) {
+      getPeer()->setUtpTried(true);
       A2_LOG_INFO(fmt("CUID#%" PRId64 " - Trying uTP connection to %s:%u",
                       getCuid(), getPeer()->getIPAddress().c_str(),
                       getPeer()->getPort()));

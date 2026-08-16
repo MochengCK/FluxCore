@@ -93,6 +93,13 @@ private:
   // 它区分 TCP/uTP 连接比例。
   bool utp_;
 
+  // 出站连接是否已经尝试过 uTP。uTP 是无连接 UDP 传输，connect() 总能
+  // "成功"返回（尚未完成 SYN/SYN-ACK 握手），因此 uTP 一旦失败（对端
+  // 不支持 / NAT 丢弃 UDP / 握手超时），peer 被 returnPeer 后重新
+  // checkout 会再次走 uTP、再次失败，形成"死连接"死循环。用此标记让
+  // 每个 peer 只尝试一次 uTP，失败后回退 TCP。
+  bool utpTried_ = false;
+
   // 断开时保留的本会话真实统计（releaseSessionResource 时捕获），
   // 供 RPC getPeers 的 disconnected 分组展示真实数据，避免前端显示
   // 硬编码 0。
@@ -145,6 +152,10 @@ public:
   // 会话时按传输类型设置。
   void setUtp(bool b) { utp_ = b; }
   bool isUtp() const { return utp_; }
+
+  // 出站 uTP 尝试标记（见 utpTried_ 注释）。仅出站连接决策使用。
+  void setUtpTried(bool b) { utpTried_ = b; }
+  bool hasUtpTried() const { return utpTried_; }
 
   // 对端 uTP 能力（BEP 11 PEX added.f 0x01 位 / 实际建立过 uTP 连接）。
   void setUtpCapable(bool b) { utpCapable_ = b; }
