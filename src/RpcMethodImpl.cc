@@ -561,6 +561,10 @@ std::unique_ptr<ValueBase> UnpauseRpcMethod::process(const RpcRequest& req,
   else {
     group->setPauseRequested(false);
     e->getRequestGroupMan()->requestQueueCheck();
+    // Wake up the engine main loop immediately so the resumed download is
+    // scheduled without waiting for the current poll timeout (up to 1s),
+    // symmetric to pauseDownload().
+    e->setRefreshInterval(std::chrono::milliseconds(0));
   }
   return createGIDResponse(gid);
 }
@@ -573,6 +577,8 @@ std::unique_ptr<ValueBase> UnpauseAllRpcMethod::process(const RpcRequest& req,
     group->setPauseRequested(false);
   }
   e->getRequestGroupMan()->requestQueueCheck();
+  // Wake up the engine main loop immediately, see UnpauseRpcMethod above.
+  e->setRefreshInterval(std::chrono::milliseconds(0));
   return createOKResponse();
 }
 

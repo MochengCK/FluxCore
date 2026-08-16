@@ -531,6 +531,12 @@ void RequestGroupMan::fillRequestGroupFromReserver(DownloadEngine* e)
   size_t numHttpActive = 0;
   
   for (const auto& group : requestGroups_) {
+    // 做种分离（bt-detach-seed-only）的任务已从 numActive_ 剔除，
+    // 这里同样不计入 BT 槽位，避免长期做种占满 BT 预算，
+    // 导致新的 BT 下载永远排不上。
+    if (group->isSeedOnlyEnabled()) {
+      continue;
+    }
 #ifdef ENABLE_BITTORRENT
     if (group->getDownloadContext()->hasAttribute(CTX_ATTR_BT)) {
       ++numBtActive;
@@ -545,7 +551,10 @@ void RequestGroupMan::fillRequestGroupFromReserver(DownloadEngine* e)
   // 为 HTTP 任务保留至少 25% 的并发槽位
   // 这样即使有大量 BT 任务，HTTP 任务也能启动
   int minHttpSlots = std::max(2, maxConcurrentDownloads / 4);
-  int maxBtSlots = maxConcurrentDownloads - minHttpSlots;
+  // 至少为 BT 保留 1 个槽位：当用户把最大并发数设得很小（如 2）时，
+  // maxConcurrentDownloads - minHttpSlots 会变成 0 或负数，导致 BT
+  // 任务永远无法启动。
+  int maxBtSlots = std::max(1, maxConcurrentDownloads - minHttpSlots);
   
   // 检查是否还有可用槽位
   bool hasHttpSlot = (static_cast<int>(numHttpActive) < maxConcurrentDownloads);
@@ -565,7 +574,17 @@ void RequestGroupMan::fillRequestGroupFromReserver(DownloadEngine* e)
                    numActive_, maxConcurrentDownloads));
 
   int count = 0;
-  int num = maxConcurrentDownloads - numActive_;
+  // 按类型分别计算剩余槽位，取最大值作为本轮可提升的任务数。
+  // 之前的写法是 num = maxConcurrentDownloads - numActive_（总活跃数），
+  // 这会让 BT/磁力任务一旦占满总并发数，HTTP 任务即便拥有保留槽位
+  // 也永远无法从等待队列启动——直到用户手动暂停 BT 任务腾出总名额。
+  // 这正是"磁力/BT 下载时 HTTP(S) 任务一直卡在等待中"的根因。
+  // 现在：HTTP 任务只受 HTTP 槽位限制（不被 BT 占用拖累），BT 任务
+  // 受 maxBtSlots 约束；逐任务校验仍由下方 hasHttpSlot/hasBtSlot
+  // 把关，因此 num 偏大只是多扫描队列，不会造成超发。
+  int num = std::max(
+      maxConcurrentDownloads - static_cast<int>(numHttpActive),
+      maxBtSlots - static_cast<int>(numBtActive));
   std::vector<std::shared_ptr<RequestGroup>> pending;
 
   while (count < num && (uriListParser_ || !reservedGroups_.empty())) {
