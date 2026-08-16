@@ -108,7 +108,13 @@ PeerInteractionCommand::PeerInteractionCommand(
   // TODO move following bunch of processing to separate method, like init()
   if (sequence_ == INITIATOR_SEND_HANDSHAKE) {
     disableReadCheckSocket();
-    setWriteCheckSocket(getSocket());
+    // uTP 传输（socket == nullptr）不注册 SocketCore 事件：
+    // IO 由 utp::UtpCommand 的 processTick 泵送，本命令每轮被调度，
+    // 在此对空 socket 调用 setWriteCheckSocket 会解引用空指针导致
+    // 引擎崩溃（SIGSEGV）。
+    if (getSocket()) {
+      setWriteCheckSocket(getSocket());
+    }
     setTimeout(std::chrono::seconds(
         getOption()->getAsInt(PREF_PEER_CONNECTION_TIMEOUT)));
   }
@@ -329,7 +335,11 @@ bool PeerInteractionCommand::executeInternal()
         break;
       }
       disableWriteCheckSocket();
-      setReadCheckSocket(getSocket());
+      // uTP：无 SocketCore，不注册读事件（数据由 UtpCommand 泵入连接
+      // 缓冲，本命令每轮轮询 receiveHandshake 即可）。
+      if (getSocket()) {
+        setReadCheckSocket(getSocket());
+      }
       // socket->setBlockingMode();
       setTimeout(std::chrono::seconds(getOption()->getAsInt(PREF_BT_TIMEOUT)));
       btInteractive_->initiateHandshake();
@@ -376,7 +386,10 @@ bool PeerInteractionCommand::executeInternal()
         setNoCheck(true);
       }
       else {
-        setReadCheckSocket(getSocket());
+        // uTP：无 SocketCore，不注册读事件
+        if (getSocket()) {
+          setReadCheckSocket(getSocket());
+        }
       }
 
       done = true;
@@ -389,7 +402,11 @@ bool PeerInteractionCommand::executeInternal()
            ->getRequestGroupMan()
            ->doesOverallUploadSpeedExceed() &&
       !requestGroup_->doesUploadSpeedExceed()) {
-    setWriteCheckSocket(getSocket());
+    // uTP：无 SocketCore，不注册写事件（待发数据写入 uTP 连接缓冲，
+    // 由 UtpCommand 的 tick 泵出）
+    if (getSocket()) {
+      setWriteCheckSocket(getSocket());
+    }
   }
   else {
     disableWriteCheckSocket();
