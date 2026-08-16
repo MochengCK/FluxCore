@@ -1438,10 +1438,56 @@ std::unique_ptr<ValueBase> GetPeersRpcMethod::process(const RpcRequest& req,
   gatherPeer(connectedPeers.get(), btObject->peerStorage);
   result->put("connected", std::move(connectedPeers));
   
-  // 2. 尝试连接节点 (unused peers - attempting to connect)
+  // 2. 尝试连接节点 (unused peers + used-but-not-active peers)
+  // usedPeers 中 !isActive() 的 peer 是已 checkout 但 BT 握手尚未完成
+  // 的连接（如 uTP 连接正在 SYN_SENT / 等待 uTP CONNECTED 状态）。
+  // 这些 peer 既不在 connected 列表（gatherPeer 跳过 !isActive()），
+  // 也不在 unusedPeers（已被 checkout），导致前端"尝试连接"分组
+  // 看不到它们。将它们补充到 attempting 列表中。
   auto attemptingPeers = List::g();
   auto defaultPeerStorage = std::dynamic_pointer_cast<DefaultPeerStorage>(btObject->peerStorage);
   if (defaultPeerStorage) {
+    // 2a. usedPeers 中 !isActive() 的 peer（正在尝试连接/握手）
+    auto& usedPeers = btObject->peerStorage->getUsedPeers();
+    for (auto& peer : usedPeers) {
+      if (peer->isActive()) {
+        continue; // 已连接，已在 connected 列表中
+      }
+      auto peerEntry = Dict::g();
+      peerEntry->put(KEY_PEER_ID, util::torrentPercentEncode(peer->getPeerId(),
+                                                             PEER_ID_LENGTH));
+      peerEntry->put(KEY_IP, peer->getIPAddress());
+      if (!peer->getClientName().empty()) {
+        peerEntry->put(KEY_CLIENT_NAME, peer->getClientName());
+      }
+      peerEntry->put(KEY_PORT, util::uitos(peer->getPort()));
+      peerEntry->put(KEY_BITFIELD, "");
+      peerEntry->put(KEY_DOWNLOAD_SPEED, Integer::g(0));
+      peerEntry->put(KEY_UPLOAD_SPEED, Integer::g(0));
+      peerEntry->put(KEY_DOWNLOAD_LENGTH, Integer::g(0));
+      // 使用首次接触时间计算已尝试连接的时长
+      auto now = global::wallclock();
+      auto diff = peer->getFirstContactTime().difference(now);
+      auto attemptSeconds = std::chrono::duration_cast<std::chrono::seconds>(diff).count();
+      peerEntry->put(KEY_CONNECTION_TIME, util::itos(attemptSeconds));
+      peerEntry->put("attempts", Integer::g(defaultPeerStorage->getAttemptCount(
+          peer->getIPAddress(), peer->getOrigPort())));
+      peerEntry->put("fails", Integer::g(defaultPeerStorage->getFailCount(
+          peer->getIPAddress(), peer->getOrigPort())));
+      peerEntry->put("tcpFails", Integer::g(defaultPeerStorage->getTcpFailCount(
+          peer->getIPAddress(), peer->getOrigPort())));
+      peerEntry->put("utpFails", Integer::g(defaultPeerStorage->getUtpFailCount(
+          peer->getIPAddress(), peer->getOrigPort())));
+      peerEntry->put("udpFails", Integer::g(defaultPeerStorage->getUdpFailCount(
+          peer->getIPAddress(), peer->getOrigPort())));
+      peerEntry->put(KEY_PROTOCOL, getPeerProtocolLabel(peer));
+      peerEntry->put(KEY_SOURCE, getPeerSourceLabel(peer));
+      peerEntry->put(KEY_ENGINE_STATUS, "attempting");
+      peerEntry->put(KEY_ENCRYPTED, Null::g());
+      attemptingPeers->append(std::move(peerEntry));
+    }
+
+    // 2b. unusedPeers（待 checkout 的 peer）
     auto& unusedPeers = defaultPeerStorage->getUnusedPeers();
     for (auto& peer : unusedPeers) {
       auto peerEntry = Dict::g();
@@ -1719,9 +1765,16 @@ std::unique_ptr<ValueBase> GetTaskStatsRpcMethod::process(const RpcRequest& req,
       auto defaultPeerStorage =
           std::dynamic_pointer_cast<DefaultPeerStorage>(btObject->peerStorage);
       if (defaultPeerStorage) {
-        peers->put("attempting",
-                   Integer::g(static_cast<int64_t>(
-                       defaultPeerStorage->getUnusedPeers().size())));
+        // attempting = unusedPeers + usedPeers 中 !isActive() 的 peer
+        // （正在尝试连接但 BT 握手未完成，如 uTP SYN_SENT 状态）
+        int attempting = static_cast<int>(
+            defaultPeerStorage->getUnusedPeers().size());
+        for (auto& peer : btObject->peerStorage->getUsedPeers()) {
+          if (!peer->isActive()) {
+            ++attempting;
+          }
+        }
+        peers->put("attempting", Integer::g(static_cast<int64_t>(attempting)));
         peers->put("disconnected",
                    Integer::g(static_cast<int64_t>(
                        defaultPeerStorage->getDroppedPeers().size())));

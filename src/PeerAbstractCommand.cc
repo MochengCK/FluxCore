@@ -86,7 +86,21 @@ bool PeerAbstractCommand::execute()
     return true;
   }
   try {
-    if (noCheck_ || (checkSocketIsReadable_ && readEventEnabled()) ||
+    // uTP 传输（socket_ == nullptr）没有 SocketCore 事件：IO 由
+    // utp::UtpCommand 的 processTick/receiveLoop 泵送，本命令每轮被
+    // 引擎直接调度。因此不能用 socket 事件来刷新 checkPoint_——否则
+    // checkPoint_ 永远不更新，120s（PREF_BT_TIMEOUT）后连接被超时
+    // abort，即使 uTP 握手正在正常进行中。对 uTP 连接，每次
+    // executeInternal() 成功执行就刷新 checkPoint_（等价于 noCheck_）。
+    // 超时检测改为依赖 UtpConnection 自身的 RTO/handleTimeout 机制
+    // （SYN 重试 4 次、数据重传 2 次 RTO 后 error_=true），UtpSocketLike
+    // 在连接 CLOSED/error 时会让 receiveHandshake 抛 EOF，触发本命令
+    // 的异常路径正常退出。
+    if (!socket_) {
+      // uTP：跳过所有 socket 事件检查，直接刷新 checkPoint_ 并执行。
+      checkPoint_ = global::wallclock();
+    }
+    else if (noCheck_ || (checkSocketIsReadable_ && readEventEnabled()) ||
         (checkSocketIsWritable_ && writeEventEnabled()) || hupEventEnabled()) {
       checkPoint_ = global::wallclock();
     }
