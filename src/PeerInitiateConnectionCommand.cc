@@ -87,9 +87,15 @@ bool PeerInitiateConnectionCommand::executeInternal()
   // retries it (TCP path included).
   auto utpCtx = getDownloadEngine()->getUtpContext();
   const auto* opt = getDownloadEngine()->getOption();
+  // uTP (BEP 29) 本身是明文传输，不参与 TCP 侧的 MSE 加密协商。
+  // 因此只要不"强制加密"（bt-require-crypto / bt-force-encryption），
+  // 就允许 uTP 明文连接——即使"自适应加密"（bt-min-crypto-level=arc4）
+  // 模式下 TCP 拒绝明文，uTP 仍可明文建立，与 qBittorrent/uTorrent 的
+  // 行为一致。此前额外要求 min-crypto-level == plain，导致默认的
+  // "自适应加密"配置下 uTP 被完全禁用、所有 peer 回退 TCP，节点表格
+  // 永远只能显示 TCP/tcp-ext。
   bool plainAllowed = !opt->getAsBool(PREF_BT_REQUIRE_CRYPTO) &&
-                      !opt->getAsBool(PREF_BT_FORCE_ENCRYPTION) &&
-                      opt->get(PREF_BT_MIN_CRYPTO_LEVEL) == V_PLAIN;
+                      !opt->getAsBool(PREF_BT_FORCE_ENCRYPTION);
   if (utpCtx && opt->getAsBool(PREF_ENABLE_UTP) && plainAllowed) {
     auto conn =
         utpCtx->connect(getPeer()->getIPAddress(), getPeer()->getPort());

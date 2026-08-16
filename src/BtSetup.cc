@@ -248,11 +248,12 @@ void BtSetup::setup(std::vector<std::unique_ptr<Command>>& commands,
         e->getUtpContext()->setAcceptHandler(
             [e](const std::shared_ptr<utp::UtpConnection>& conn) {
               // MSE 加密不在 uTP 上传输（本实现中 uTP 仅承载明文
-              // Legacy 握手）。当加密策略不允许明文时（强制/自适应
-              // 加密：bt-require-crypto 或 bt-force-encryption 为真，
-              // 或 bt-min-crypto-level=arc4），拒绝入站 uTP，让对端
-              // 回退 TCP——TCP 路径会正常进行 MSE 协商。与出站 uTP
-              // 的 plainAllowed 门控保持一致。
+              // Legacy 握手）。只有当"强制加密"（bt-require-crypto 或
+              // bt-force-encryption 为真）时才拒绝入站 uTP，让对端
+              // 回退 TCP。此前额外要求 bt-min-crypto-level=plain，导致
+              // 默认"自适应加密"（arc4）配置下入站 uTP 也被拒绝、全部
+              // 回退 TCP，节点表格显示不了 uTP。与出站 uTP 的
+              // plainAllowed 门控保持一致。
               const auto* opt = e->getOption();
               // 热更新：enable-utp 被关闭时拒绝新入站 uTP 连接（出站
               // 侧 PeerInitiateConnectionCommand 同样实时读取该选项）。
@@ -264,11 +265,10 @@ void BtSetup::setup(std::vector<std::unique_ptr<Command>>& commands,
               }
               const bool plainAllowed =
                   !opt->getAsBool(PREF_BT_REQUIRE_CRYPTO) &&
-                  !opt->getAsBool(PREF_BT_FORCE_ENCRYPTION) &&
-                  opt->get(PREF_BT_MIN_CRYPTO_LEVEL) == V_PLAIN;
+                  !opt->getAsBool(PREF_BT_FORCE_ENCRYPTION);
               if (!plainAllowed) {
                 A2_LOG_INFO(
-                    "uTP: inbound connection rejected (encryption policy "
+                    "uTP: inbound connection rejected (forced encryption "
                     "disallows plaintext; peer may retry over TCP)");
                 return;
               }
