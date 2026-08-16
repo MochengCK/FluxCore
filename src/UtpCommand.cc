@@ -44,6 +44,18 @@ namespace utp {
 UtpCommand::UtpCommand(cuid_t cuid, DownloadEngine* e) : Command{cuid}, e_{e}
 {
   setStatusRealtime();
+  if (auto* ctx = e_->getUtpContext()) {
+    ctx->setCommandAlive(true);
+  }
+}
+
+UtpCommand::~UtpCommand()
+{
+  // 标记本命令已消亡：downloadFinished() 退出后 BtSetup 会在下一个
+  // BT 任务时重建 UtpCommand，恢复 processTick/receiveLoop 泵送。
+  if (auto* ctx = e_->getUtpContext()) {
+    ctx->setCommandAlive(false);
+  }
 }
 
 bool UtpCommand::execute()

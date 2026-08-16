@@ -227,8 +227,12 @@ void BtSetup::setup(std::vector<std::unique_ptr<Command>>& commands,
 
     // uTP (BEP 29): host the transport for the whole process once.
     if (option->getAsBool(PREF_ENABLE_UTP)) {
-      static bool utpCommandAdded = false;
-      if (!utpCommandAdded && e->getUtpContext()) {
+      // 不能用进程级 static 标记：UtpCommand 在引擎空闲（所有任务
+      // 结束）时按惯例退出，若标记不重置，此后新建的 BT 任务再也
+      // 无人泵送 uTP（processTick/receiveLoop），出站 SYN 发出后
+      // 必然超时，全部回退 TCP —— 症状即"peer 全显示 TCP"。
+      // 改由 UtpContext 记录命令存活状态，命令退出后可重建。
+      if (e->getUtpContext() && !e->getUtpContext()->hasLiveCommand()) {
         // 用与 TCP 监听相同的端口启动 uTP（标准 BT 约定：对端把
         // uTP SYN 发到我们通告的监听端口）。此前在引擎构造时绑定
         // 临时端口，入站 uTP 永远收不到 SYN——这就是"启用了 uTP
@@ -236,7 +240,6 @@ void BtSetup::setup(std::vector<std::unique_ptr<Command>>& commands,
         if (!e->getUtpContext()->isStarted()) {
           e->getUtpContext()->start(btReg->getTcpPort());
         }
-        utpCommandAdded = true;
         e->addRoutineCommand(
             make_unique<utp::UtpCommand>(e->newCUID(), e));
         // Inbound uTP peers: on SYN, spawn the standard handshake

@@ -83,6 +83,14 @@ public:
   // True once the UDP socket is bound.
   bool isStarted() const { return started_; }
 
+  // Whether a UtpCommand is currently alive and pumping this context.
+  // The command exits when the engine has no tasks left
+  // (downloadFinished()); BtSetup consults this flag on the next BT
+  // task to re-spawn the command. Without it, uTP silently dies for
+  // the rest of the process lifetime after one idle period.
+  bool hasLiveCommand() const { return liveCommand_; }
+  void setCommandAlive(bool b) { liveCommand_ = b; }
+
   // Create an outbound connection to addr:port (already in SYN_SENT
   // with the SYN queued). nullptr if not started.
   std::shared_ptr<UtpConnection> connect(const std::string& addr,
@@ -117,6 +125,7 @@ private:
   std::map<uint16_t, std::shared_ptr<UtpConnection>> connections_;
   AcceptHandler acceptHandler_;
   bool started_ = false;
+  bool liveCommand_ = false;
 };
 
 } // namespace utp

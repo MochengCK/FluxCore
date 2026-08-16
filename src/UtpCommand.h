@@ -50,6 +50,7 @@ namespace utp {
 class UtpCommand : public Command {
 public:
   UtpCommand(cuid_t cuid, DownloadEngine* e);
+  ~UtpCommand();
 
   virtual bool execute() CXX11_OVERRIDE;
 
