@@ -96,14 +96,15 @@ bool PeerInitiateConnectionCommand::executeInternal()
   // 永远只能显示 TCP/tcp-ext。
   bool plainAllowed = !opt->getAsBool(PREF_BT_REQUIRE_CRYPTO) &&
                       !opt->getAsBool(PREF_BT_FORCE_ENCRYPTION);
-  // 每个 peer 只尝试一次出站 uTP：uTP 是无连接 UDP 传输，connect()
-  // 总能"成功"返回（SYN/SYN-ACK 尚未完成）。若对端不支持 uTP 或 NAT
-  // 丢弃 UDP，uTP 会在 ~15s 后超时失败，peer 被 returnPeer 后重新
-  // checkout 又会走 uTP、再次失败，形成"死连接"死循环（节点表格里
-  // 全是无速度、无 peerId 的 µTP 节点）。标记 utpTried 后，失败的下
-  // 一次 checkout 直接走 TCP。
+  // 出站 uTP 仅针对已知支持 uTP 的 peer（PEX added.f 0x01 位广播）。
+  // 此前对所有 peer 都先尝试 uTP，而 uTP 是无连接 UDP 传输，connect()
+  // 总能"成功"返回（SYN/SYN-ACK 尚未完成），若对端不支持 uTP 或 NAT
+  // 丢弃 UDP，uTP 会在 ~15s 后超时失败，形成大量"uTP 死链接、无速度"
+  // 的症状。改为仅对 PEX 广播了 uTP 能力的 peer 主动发起 uTP，其余
+  // peer 直接走 TCP。入站 uTP（BtSetup 的 acceptHandler）不受影响，
+  // 别人主动向我们发起的 uTP 连接仍可被接受。
   if (utpCtx && opt->getAsBool(PREF_ENABLE_UTP) && plainAllowed &&
-      !getPeer()->hasUtpTried()) {
+      getPeer()->isUtpCapable() && !getPeer()->hasUtpTried()) {
     auto conn =
         utpCtx->connect(getPeer()->getIPAddress(), getPeer()->getPort());
     if (conn) {
