@@ -100,7 +100,9 @@ bool UtpContext::start(uint16_t port)
   }
 }
 
-std::shared_ptr<UtpConnection> UtpContext::connect(const std::string& addr, uint16_t port)
+std::shared_ptr<UtpConnection> UtpContext::connect(const std::string& addr,
+                                                   uint16_t port,
+                                                   uint32_t synTimeoutUs)
 {
   if (!started_) {
     return nullptr;
@@ -109,7 +111,8 @@ std::shared_ptr<UtpConnection> UtpContext::connect(const std::string& addr, uint
   // emplace 会静默失败（连接不在注册表，其 SYN 永远发不出去）。
   // 必须重试直至注册成功。
   for (int attempt = 0; attempt < 8; ++attempt) {
-    auto conn = std::make_shared<UtpConnection>(addr, port, nowUs());
+    auto conn =
+        std::make_shared<UtpConnection>(addr, port, nowUs(), synTimeoutUs);
     if (connections_.emplace(conn->getRecvId(), conn).second) {
       return conn;
     }

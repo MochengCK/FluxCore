@@ -93,8 +93,11 @@ public:
 
   // Create an outbound connection to addr:port (already in SYN_SENT
   // with the SYN queued). nullptr if not started.
+  // synTimeoutUs: optional total budget for the SYN exchange (µs);
+  // 0 = default retry budget. See UtpConnection constructor.
   std::shared_ptr<UtpConnection> connect(const std::string& addr,
-                                         uint16_t port);
+                                         uint16_t port,
+                                         uint32_t synTimeoutUs = 0);
 
   // Drive all connections: timers, retransmission, CC-gated data flush,
   // and send all queued datagrams.

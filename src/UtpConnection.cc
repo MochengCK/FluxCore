@@ -91,7 +91,7 @@ uint32_t rand32(uint32_t seed)
 } // namespace
 
 UtpConnection::UtpConnection(const std::string& remoteAddr, uint16_t remotePort,
-                             uint32_t nowUs)
+                             uint32_t nowUs, uint32_t synTimeoutUs)
     : remoteAddr_(remoteAddr), remotePort_(remotePort)
 {
   initCommon(remoteAddr, remotePort);
@@ -109,6 +109,10 @@ UtpConnection::UtpConnection(const std::string& remoteAddr, uint16_t remotePort,
   state_ = State::SYN_SENT;
   lastRecvUs_ = 0;
   lastSendUs_ = nowUs;
+  if (synTimeoutUs > 0) {
+    synDeadlineUs_ = nowUs + synTimeoutUs;
+    synDeadlineValid_ = true;
+  }
   // Queue the initial SYN (carries sendId_, like all our packets).
   queueControl(ST_SYN, nowUs, 0);
 }
@@ -537,6 +541,14 @@ void UtpConnection::processTick(uint32_t nowUs)
 void UtpConnection::handleTimeout(uint32_t nowUs)
 {
   if (state_ == State::SYN_SENT) {
+    // 自定义 SYN 总预算（未知 uTP 能力 peer 的快速探测）：到点直接
+    // 失败，让上层尽快回退 TCP，而不是吃满默认 ~7.5s 重试预算。
+    if (synDeadlineValid_ &&
+        static_cast<int32_t>(nowUs - synDeadlineUs_) >= 0) {
+      error_ = true;
+      state_ = State::CLOSED;
+      return;
+    }
     // Retransmit the SYN a few times before giving up.
     ++synAttempts_;
     timeout_ = std::min<uint32_t>(timeout_ * 2, RTO_MAX_US);

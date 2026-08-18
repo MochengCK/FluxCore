@@ -71,8 +71,14 @@ public:
 
   // Create an outbound (initiator) connection. The SYN is queued on
   // construction and flushed by processTick().
+  // synTimeoutUs: optional wall-clock budget (µs) for the whole SYN
+  // exchange; 0 = default retry budget (4 RTO-doubling attempts,
+  // ~7.5s). Used for "uTP-first with fast TCP fallback" probes of
+  // peers whose uTP support is unknown: a short budget turns a
+  // would-be dead link into a quick failure so the peer can be
+  // retried over TCP on the next connection cycle.
   UtpConnection(const std::string& remoteAddr, uint16_t remotePort,
-                uint32_t nowUs);
+                uint32_t nowUs, uint32_t synTimeoutUs = 0);
 
   // Create an inbound (responder) connection after receiving a SYN.
   // peerRecvId is the connection_id from the SYN packet; ackNr is the
@@ -184,6 +190,10 @@ private:
   bool finAcked_ = false;
   uint16_t finSeq_ = 0;
   unsigned synAttempts_ = 0;
+  // 出站 SYN 交换的总预算（绝对截止时刻，µs）。0 = 无自定义预算，
+  // 走默认 4 次 RTO 倍增重试。用于未知 uTP 能力 peer 的快速探测。
+  uint32_t synDeadlineUs_ = 0;
+  bool synDeadlineValid_ = false;
 
   // --- receive side ---
   std::deque<unsigned char> recvOut_; // ordered bytes ready to read
