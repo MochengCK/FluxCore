@@ -112,7 +112,7 @@ bool PeerInitiateConnectionCommand::executeInternal()
   if (utpCtx && opt->getAsBool(PREF_ENABLE_UTP) && plainAllowed && !peerIsV6 &&
       !getPeer()->hasUtpTried()) {
     const uint32_t synBudgetUs =
-        getPeer()->isUtpCapable() ? 0 /* 默认完整预算 */ : 3'000'000;
+        getPeer()->isUtpCapable() ? 0 /* 默认完整预算 */ : 3000000;
     auto conn = utpCtx->connect(getPeer()->getIPAddress(),
                                 getPeer()->getPort(), synBudgetUs);
     if (conn) {
