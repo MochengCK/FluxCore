@@ -14,8 +14,7 @@ XferCore 是一个基于 `aria2 <https://github.com/aria2/aria2>`_ 的下载引�
 并新增原生 ED2K 协议支持。
 
 aria2 是由 Tatsuhiro Tsujikawa 开发的自由软件，
-遵循 GPL-2.0-or-later 许可证。
-XferCore 在其基础上继续以 GPL-3.0 许可证发布。
+遵循 GPL-2.0 许可证。
 
 XferCore Description
 ----------------
@@ -28,8 +27,7 @@ while adapting and extending it for desktop download scenarios,
 with native ED2K protocol support added.
 
 aria2 is free software developed by Tatsuhiro Tsujikawa,
-licensed under GPL-2.0-or-later.
-XferCore continues on that basis under the GPL-3.0 license.
+licensed under GPL-2.0.
 * `RFC 3659 Extensions to FTP <http://tools.ietf.org/html/rfc3659>`_
 * `RFC 3986 Uniform Resource Identifier (URI): Generic Syntax <http://tools.ietf.org/html/rfc3986>`_
 * `RFC 4038 Application Aspects of IPv6 Transition <http://tools.ietf.org/html/rfc4038>`_
