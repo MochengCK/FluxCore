@@ -331,6 +331,11 @@ bool PeerInteractionCommand::executeInternal()
       // writable once the uTP handshake completes (driven by
       // utp::UtpCommand), so skip the socket writability wait.
       if (getSocket() && !getSocket()->isWritable(0)) {
+        // 连接建立阶段（TCP SYN 未完成）用短超时：死链 30s 内快速失败
+        // 并释放连接额度（经 onConnectionFailed 计入失败统计，候选池
+        // 轮转下一个 peer）；握手真正开始后恢复完整 bt-timeout。
+        setTimeout(std::chrono::seconds(
+            std::min<int>(getOption()->getAsInt(PREF_BT_TIMEOUT), 30)));
         done = true;
         break;
       }

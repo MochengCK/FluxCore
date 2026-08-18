@@ -150,7 +150,7 @@ private:
               size_t payloadLen, uint32_t nowUs);
   void updateRtt(uint32_t packetRttUs);
   void updateDelay(uint32_t sampleUs, uint32_t nowUs);
-  void updateWindow(uint32_t nowUs);
+  void updateWindow(uint32_t nowUs, uint32_t newlyAcked);
   void retransmitUnacked(uint32_t nowUs);
   void handleTimeout(uint32_t nowUs);
   uint32_t advertsiedWnd() const;

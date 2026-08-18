@@ -64,6 +64,10 @@ void DHTPeerAnnounceCommand::process()
 {
   try {
     peerAnnounceStorage_->handleTimeout();
+    // 对外宣告：为我们已知 infohash 的条目周期性发起 get_peers
+    // lookup（同时通过 announce_peer 把自己宣告到目标节点）。
+    // 漏掉此调用会导致这些 infohash 的 peer 发现停摆。
+    peerAnnounceStorage_->announcePeer();
   }
   catch (RecoverableException& e) {
     A2_LOG_ERROR_EX(EX_EXCEPTION_CAUGHT, e);

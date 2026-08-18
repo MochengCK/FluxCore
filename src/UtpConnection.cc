@@ -52,7 +52,11 @@ namespace {
 constexpr uint32_t DEFAULT_PACKET_SIZE = 1400;
 constexpr uint32_t MIN_PACKET_SIZE = 150;
 // Receive buffer cap; advertised to the peer as our flow-control window.
-constexpr uint32_t RECV_WINDOW = 256 * 1024;
+// 1MB：256KB 在高带宽×高延迟链路（如 200ms RTT 跨洲）会把对端发送
+// 速率硬限制在 ~10Mbps；1MB 覆盖 ~40Mbps@200ms 的 BDP，内存上界
+// 仍受 peer 数量约束。应用层每轮引擎循环即排空 recvOut_，实际驻留
+// 远低于该上限。
+constexpr uint32_t RECV_WINDOW = 1024 * 1024;
 // LEDBAT target one-way delay (spec: CCONTROL_TARGET = 100ms).
 constexpr uint32_t CC_TARGET_US = 100 * 1000;
 // Base delay window (spec: 2 minutes).
@@ -394,7 +398,7 @@ void UtpConnection::onAck(uint16_t ackNr, uint32_t sackBits, uint32_t nowUs)
     if (haveRtt) {
       updateRtt(rttSampleUs);
     }
-    updateWindow(nowUs);
+    updateWindow(nowUs, freed);
     wantWrite_ = true; // window freed; try flushing in processTick
   }
   // FIN 不进入 sendQueue_（由 queueControl 直发），其确认只能通过
@@ -643,7 +647,7 @@ void UtpConnection::updateDelay(uint32_t sampleUs, uint32_t nowUs)
   }
 }
 
-void UtpConnection::updateWindow(uint32_t nowUs)
+void UtpConnection::updateWindow(uint32_t nowUs, uint32_t newlyAcked)
 {
   // LEDBAT: off_target = target - our_delay.
   uint32_t ourDelay = baseDelay_ == 0 || lastDelaySampleUs_ <= baseDelay_
@@ -651,15 +655,20 @@ void UtpConnection::updateWindow(uint32_t nowUs)
                           : lastDelaySampleUs_ - baseDelay_;
   int64_t offTarget = static_cast<int64_t>(CC_TARGET_US) - ourDelay;
   double delayFactor = static_cast<double>(offTarget) / CC_TARGET_US;
-  double windowFactor =
-      maxWindow_ == 0 ? 1.0 : static_cast<double>(curWindow_) / maxWindow_;
-  double gain = MAX_CWND_INCREASE_PER_RTT * delayFactor * windowFactor;
-  int64_t delta = static_cast<int64_t>(gain * packetSize_);
-  int64_t newWindow = static_cast<int64_t>(maxWindow_) + delta;
+  if (delayFactor < 0) {
+    delayFactor = 0; // over target: don't grow (loss path shrinks instead)
+  }
+  // libutp/LEDBAT 语义：窗口增长按"本次新确认的字节数"等比缩放，
+  // 而非每个 ACK 固定 +1 MSS。延迟远低于目标时（如冷启动无基线）
+  // 增长近似指数（等效 slow start），逼近目标后自动收敛到线性。
+  // 丢包路径（超时/快速重传）仍减半兜底。
+  int64_t delta = static_cast<int64_t>(MAX_CWND_INCREASE_PER_RTT *
+                                       delayFactor * newlyAcked);
   // Startup boost while we have no delay baseline yet (slow start).
   if (baseDelay_ == 0) {
-    newWindow += packetSize_;
+    delta += packetSize_;
   }
+  int64_t newWindow = static_cast<int64_t>(maxWindow_) + delta;
   maxWindow_ = static_cast<uint32_t>(
       std::max<int64_t>(newWindow, packetSize_));
 }

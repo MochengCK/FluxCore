@@ -35,7 +35,9 @@
 
 #include "InternalDHKeyExchange.h"
 
+#include <algorithm>
 #include <cstring>
+#include <vector>
 
 #include "DlAbortEx.h"
 #include "LogFactory.h"
@@ -43,6 +45,22 @@
 #include "util.h"
 
 namespace aria2 {
+
+namespace {
+// bignum（ulong<dim>）内部是小端字节序（buf[0] 为最低位字节），而
+// MSE (BEP 8) 的线上格式是固定 96 字节大端：素数 hex 串经 fromHex
+// 得到的是大端字节，对端公钥/我方公钥/共享密钥 S 也都以大端在
+// 线上传输并参与 SHA1。此前边界处未做字节序转换——素数被当成另一
+// 个数、公钥/密钥字节全部颠倒——引擎自连（两侧同错）能通，但与
+// 任何规范实现（qBittorrent/libtorrent，大端）共享密钥必然不一致，
+// MSE 握手 VC 校验永远失败，表现为"零加密连接"。
+void reverseBytes(const unsigned char* in, size_t len, unsigned char* out)
+{
+  for (size_t i = 0; i < len; ++i) {
+    out[i] = in[len - 1 - i];
+  }
+}
+} // namespace
 
 void DHKeyExchange::init(const unsigned char* prime, size_t primeBits,
                          const unsigned char* generator, size_t privateKeyBits)
@@ -55,7 +73,12 @@ void DHKeyExchange::init(const unsigned char* prime, size_t primeBits,
   if (pr.empty()) {
     throw DL_ABORT_EX("No valid prime supplied");
   }
-  prime_ = n(reinterpret_cast<const unsigned char*>(pr.c_str()), pr.length());
+  {
+    // 大端 → 小端（bignum 内部表示）
+    std::vector<unsigned char> tmp(pr.begin(), pr.end());
+    std::reverse(tmp.begin(), tmp.end());
+    prime_ = n(tmp.data(), tmp.size());
+  }
 
   std::string gen = reinterpret_cast<const char*>(generator);
   if (gen.length() % 2) {
@@ -65,8 +88,11 @@ void DHKeyExchange::init(const unsigned char* prime, size_t primeBits,
   if (gen.empty()) {
     throw DL_ABORT_EX("No valid generator supplied");
   }
-  generator_ =
-      n(reinterpret_cast<const unsigned char*>(gen.c_str()), gen.length());
+  {
+    std::vector<unsigned char> tmp(gen.begin(), gen.end());
+    std::reverse(tmp.begin(), tmp.end());
+    generator_ = n(tmp.data(), tmp.size());
+  }
 
   size_t pbytes = (privateKeyBits + 7) / 8;
   unsigned char buf[pbytes];
@@ -91,7 +117,12 @@ size_t DHKeyExchange::getPublicKey(unsigned char* out, size_t outLength) const
             static_cast<unsigned long>(keyLength_),
             static_cast<unsigned long>(outLength)));
   }
-  publicKey_.binary(out, outLength);
+  {
+    std::vector<unsigned char> tmp(keyLength_);
+    publicKey_.binary(tmp.data(), keyLength_);
+    // 小端内部 → 大端线上
+    reverseBytes(tmp.data(), keyLength_, out);
+  }
   return keyLength_;
 }
 
@@ -117,10 +148,18 @@ size_t DHKeyExchange::computeSecret(unsigned char* out, size_t outLength,
             static_cast<unsigned long>(peerPublicKeyLength)));
   }
 
-  n peerKey(peerPublicKeyData, peerPublicKeyLength);
+  // 对端公钥：大端线上 → 小端内部
+  std::vector<unsigned char> peerTmp(peerPublicKeyLength);
+  reverseBytes(peerPublicKeyData, peerPublicKeyLength, peerTmp.data());
+  n peerKey(peerTmp.data(), peerTmp.size());
   // 共享密钥 = 对端公钥^私钥 mod p（幂模）。见 generatePublicKey 注释。
   n secret = peerKey.pow_mod(privateKey_, prime_);
-  secret.binary(out, outLength);
+  {
+    std::vector<unsigned char> tmp(keyLength_);
+    secret.binary(tmp.data(), keyLength_);
+    // 小端内部 → 大端线上（SHA1 输入要求）
+    reverseBytes(tmp.data(), keyLength_, out);
+  }
 
   return outLength;
 }

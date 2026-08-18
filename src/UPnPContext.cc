@@ -329,36 +329,59 @@ bool UPnPContext::addPortMapping(uint16_t port)
     internalIp = "127.0.0.1";
   }
 
-  std::string body =
-      "<?xml version=\"1.0\"?>"
-      "<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" "
-      "s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\">"
-      "<s:Body>"
-      "<u:AddPortMapping xmlns:u=\"" +
-      serviceType_ +
-      "\">"
-      "<NewRemoteHost></NewRemoteHost>"
-      "<NewExternalPort>" +
-      util::uitos(port) +
-      "</NewExternalPort>"
-      "<NewProtocol>TCP</NewProtocol>"
-      "<NewInternalPort>" +
-      util::uitos(port) +
-      "</NewInternalPort>"
-      "<NewInternalClient>" +
-      internalIp +
-      "</NewInternalClient>"
-      "<NewEnabled>1</NewEnabled>"
-      "<NewPortMappingDescription>aria2</NewPortMappingDescription>"
-      "<NewLeaseDuration>0</NewLeaseDuration>"
-      "</u:AddPortMapping>"
-      "</s:Body>"
-      "</s:Envelope>";
+  // qBittorrent 等主流客户端会同时映射 TCP 与 UDP：UDP 映射是 NAT 后
+  // 入站 uTP（BEP 29，UDP 与 BT TCP 监听同端口）的前提，只映射 TCP
+  // 会导致"能收到 TCP 入站、永远收不到 uTP 入站"。
+  auto buildAddBody = [&internalIp, port, this](const char* proto) {
+    return std::string(
+               "<?xml version=\"1.0\"?>"
+               "<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/"
+               "envelope/\" "
+               "s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/"
+               "\">"
+               "<s:Body>"
+               "<u:AddPortMapping xmlns:u=\"") +
+           serviceType_ +
+           "\">"
+           "<NewRemoteHost></NewRemoteHost>"
+           "<NewExternalPort>" +
+           util::uitos(port) +
+           "</NewExternalPort>"
+           "<NewProtocol>" +
+           proto +
+           "</NewProtocol>"
+           "<NewInternalPort>" +
+           util::uitos(port) +
+           "</NewInternalPort>"
+           "<NewInternalClient>" +
+           internalIp +
+           "</NewInternalClient>"
+           "<NewEnabled>1</NewEnabled>"
+           "<NewPortMappingDescription>aria2</NewPortMappingDescription>"
+           "<NewLeaseDuration>0</NewLeaseDuration>"
+           "</u:AddPortMapping>"
+           "</s:Body>"
+           "</s:Envelope>";
+  };
 
-  if (!soapAction("AddPortMapping", body, host, portNum, path)) {
+  if (!soapAction("AddPortMapping", buildAddBody("TCP"), host, portNum,
+                  path)) {
     A2_LOG_WARN(fmt("UPnP: AddPortMapping for TCP port %u failed",
                     static_cast<unsigned>(port)));
     return false;
+  }
+
+  // UDP 映射失败不视为整体失败：TCP 入站仍可用，仅入站 uTP 受限。
+  if (soapAction("AddPortMapping", buildAddBody("UDP"), host, portNum,
+                 path)) {
+    A2_LOG_INFO(fmt("UPnP: TCP+UDP port %u mapped on IGD (uTP inbound "
+                    "enabled)",
+                    static_cast<unsigned>(port)));
+  }
+  else {
+    A2_LOG_WARN(fmt("UPnP: AddPortMapping for UDP port %u failed "
+                    "(inbound uTP behind this NAT will not work)",
+                    static_cast<unsigned>(port)));
   }
 
   mapped_ = true;

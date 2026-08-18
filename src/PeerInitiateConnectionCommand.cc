@@ -110,6 +110,11 @@ bool PeerInitiateConnectionCommand::executeInternal()
         utpCtx->connect(getPeer()->getIPAddress(), getPeer()->getPort());
     if (conn) {
       getPeer()->setUtpTried(true);
+      // 传输已确定走 uTP：标记到 Peer，供 RPC getPeers 的协议标签
+      // （utp/utp-ext）与失败统计分流（utpFails）使用。此前漏标导致
+      // 出站 uTP 连接在 UI 永远显示为 tcp，"零 uTP 连接"的表象由此
+      // 而来（入站 uTP 在 PeerReceiveHandshakeCommand 有正确标记）。
+      getPeer()->setUtp(true);
       A2_LOG_INFO(fmt("CUID#%" PRId64 " - Trying uTP connection to %s:%u",
                       getCuid(), getPeer()->getIPAddress().c_str(),
                       getPeer()->getPort()));

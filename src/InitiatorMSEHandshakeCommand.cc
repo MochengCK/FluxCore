@@ -95,6 +95,13 @@ bool InitiatorMSEHandshakeCommand::executeInternal()
   while (!done) {
     switch (sequence_) {
     case INITIATOR_SEND_KEY: {
+      // 连接建立阶段（TCP SYN 未完成）用短超时：死链 30s 内快速失败
+      // 并释放连接额度；连接建立、握手真正开始后（下方 writable 分支）
+      // 恢复完整 bt-timeout。
+      {
+        auto btTimeout = getOption()->getAsInt(PREF_BT_TIMEOUT);
+        setTimeout(std::chrono::seconds(btTimeout < 30 ? btTimeout : 30));
+      }
       if (!getSocket()->isWritable(0)) {
         addCommandSelf();
         return false;
