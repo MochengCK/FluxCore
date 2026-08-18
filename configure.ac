@@ -7,7 +7,9 @@ AC_INIT([XferCore],[1.6.0],[https://github.com/aria2/aria2/issues],[xfercore],[h
 AC_CANONICAL_HOST
 AC_CANONICAL_TARGET
 
-AM_INIT_AUTOMAKE([subdir-objects])
+# foreign: 与上游 aria2 一致，不强制 GNU 标准文件（AUTHORS/NEWS/README），
+# 否则干净 checkout 里 autoreconf 会因缺少 ./AUTHORS 直接失败。
+AM_INIT_AUTOMAKE([foreign subdir-objects])
 m4_ifdef([AM_SILENT_RULES], [AM_SILENT_RULES([yes])])
 
 AC_USE_SYSTEM_EXTENSIONS
