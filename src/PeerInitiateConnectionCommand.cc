@@ -97,24 +97,19 @@ bool PeerInitiateConnectionCommand::executeInternal()
   // 永远只能显示 TCP/tcp-ext。
   bool plainAllowed = !opt->getAsBool(PREF_BT_REQUIRE_CRYPTO) &&
                       !opt->getAsBool(PREF_BT_FORCE_ENCRYPTION);
-  // 出站 uTP 策略（qBittorrent 对齐：出站优先 uTP）：
-  //  - PEX 广播了 uTP 能力（added.f 0x04）的 peer：完整 SYN 重试预算；
-  //  - 能力未知的 peer（tracker/DHT 来源）：3s 快速探测预算，超时立即
-  //    失败，peer 回到候选池后由下一轮连接周期（~1s）走 TCP——把
-  //    "对端不支持 uTP"的代价从 ~7.5s 死链降到 ~4s 总延迟。
-  //  此前仅对 PEX 标记的 peer 发起 uTP，tracker/DHT 来源的 peer 永远
-  //  走 TCP，uTP 连接数远少于 qB。uTP 无连接语义下 connect() 总能
-  //  "成功"返回，故快速失败预算必须由 UtpConnection 的 SYN deadline
-  //  实施（hasUtpTried 防止重复探测）。入站 uTP 不受影响。
-  // IPv6 peer 不探测：共享 UDP socket 绑定的是 AF_INET。
+  // 出站 uTP 策略（"已知支持才发起"，与 qB/uTorrent 的保守模式一致）：
+  //  - 仅对 PEX（added.f 0x04）明确广播支持 uTP 的 peer 主动发起 uTP，
+  //    使用默认完整 SYN 重试预算；
+  //  - 能力未知的 peer（tracker/DHT 来源）一律走 TCP，不做 uTP 探测，
+  //    避免对不支持 uTP 的对端产生死链/无谓的 UDP 流量。
+  //  入站 uTP 不受此策略影响：任何对端都可以主动连我们的 UDP 端口。
+  //  IPv6 peer 不发起：共享 UDP socket 绑定的是 AF_INET。
   const bool peerIsV6 =
       getPeer()->getIPAddress().find(':') != std::string::npos;
   if (utpCtx && opt->getAsBool(PREF_ENABLE_UTP) && plainAllowed && !peerIsV6 &&
-      !getPeer()->hasUtpTried()) {
-    const uint32_t synBudgetUs =
-        getPeer()->isUtpCapable() ? 0 /* 默认完整预算 */ : 3000000;
+      getPeer()->isUtpCapable() && !getPeer()->hasUtpTried()) {
     auto conn = utpCtx->connect(getPeer()->getIPAddress(),
-                                getPeer()->getPort(), synBudgetUs);
+                                getPeer()->getPort(), 0 /* 默认完整预算 */);
     if (conn) {
       getPeer()->setUtpTried(true);
       // 传输已确定走 uTP：标记到 Peer，供 RPC getPeers 的协议标签
