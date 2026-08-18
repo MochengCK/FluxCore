@@ -440,6 +440,16 @@ void PeerInteractionCommand::onAbort()
   peerStorage_->returnPeer(getPeer());
 }
 
+void PeerInteractionCommand::onConnectionFailed()
+{
+  // 异常路径（超时/EOF/协议错误等）真实失败事件：按对端传输类型
+  // （TCP/uTP）计入 PeerStorage 失败统计，RPC getPeers 暴露给前端。
+  if (auto defaultPeerStorage =
+          std::dynamic_pointer_cast<DefaultPeerStorage>(peerStorage_)) {
+    defaultPeerStorage->recordPeerFailure(getPeer());
+  }
+}
+
 void PeerInteractionCommand::onFailure(const Exception& err)
 {
   requestGroup_->setLastErrorCode(err.getErrorCode(), err.what());

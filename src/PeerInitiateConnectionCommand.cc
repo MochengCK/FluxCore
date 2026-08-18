@@ -47,6 +47,7 @@
 #include "Peer.h"
 #include "BtRuntime.h"
 #include "PeerStorage.h"
+#include "DefaultPeerStorage.h"
 #include "PieceStorage.h"
 #include "PeerConnection.h"
 #include "UtpSocketLike.h"
@@ -174,6 +175,16 @@ bool PeerInitiateConnectionCommand::prepareForNextPeer(time_t wait)
 void PeerInitiateConnectionCommand::onAbort()
 {
   peerStorage_->returnPeer(getPeer());
+}
+
+void PeerInitiateConnectionCommand::onConnectionFailed()
+{
+  // 连接建立阶段失败（TCP/uTP 连不通、握手超时等）：计入 PeerStorage
+  // 失败统计，RPC getPeers 暴露给前端。
+  if (auto defaultPeerStorage =
+          std::dynamic_pointer_cast<DefaultPeerStorage>(peerStorage_)) {
+    defaultPeerStorage->recordPeerFailure(getPeer());
+  }
 }
 
 bool PeerInitiateConnectionCommand::exitBeforeExecute()

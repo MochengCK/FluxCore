@@ -43,7 +43,11 @@ namespace aria2 {
 
 class DHKeyExchange {
 private:
-  typedef bignum::ulong<1024> n; // aka max. 8096 bits
+  // 128 字节 = 1024 bit。MSE 的 DH 素数是 768 bit（96 字节），公钥/
+  // 私钥/共享密钥都小于它；mul_mod 内部使用 2×dim 的扩展缓冲（256
+  // 字节 = 2048 bit > 1536 bit 乘积上限），全部余量充足。
+  // 此前为 1024 字节——面积大 8 倍，模幂运算慢到无法用于握手。
+  typedef bignum::ulong<128> n;
   size_t keyLength_;
   n prime_;
   n generator_;

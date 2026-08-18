@@ -115,6 +115,7 @@ bool PeerAbstractCommand::execute()
   }
   catch (DownloadFailureException& err) {
     A2_LOG_ERROR_EX(EX_DOWNLOAD_ABORTED, err);
+    onConnectionFailed();
     onAbort();
     onFailure(err);
     return true;
@@ -123,6 +124,7 @@ bool PeerAbstractCommand::execute()
     A2_LOG_DEBUG_EX(fmt(MSG_TORRENT_DOWNLOAD_ABORTED, getCuid()), err);
     A2_LOG_DEBUG(fmt(MSG_PEER_BANNED, getCuid(), peer_->getIPAddress().c_str(),
                      peer_->getPort()));
+    onConnectionFailed();
     onAbort();
     return prepareForNextPeer(0);
   }

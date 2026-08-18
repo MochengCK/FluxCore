@@ -83,6 +83,7 @@ void DefaultPeerStorage::erasePeerStats(const std::string& ipaddr, uint16_t port
   attemptStats_.erase(key);
   failStats_.erase(key);
   tcpFailStats_.erase(key);
+  utpFailStats_.erase(key);
 }
 
 uint32_t DefaultPeerStorage::getAttemptCount(const std::string& ipaddr, uint16_t port) const
@@ -106,16 +107,33 @@ uint32_t DefaultPeerStorage::getTcpFailCount(const std::string& ipaddr, uint16_t
   return it == tcpFailStats_.end() ? 0 : it->second;
 }
 
-uint32_t DefaultPeerStorage::getUtpFailCount(const std::string&, uint16_t) const
+uint32_t DefaultPeerStorage::getUtpFailCount(const std::string& ipaddr,
+                                             uint16_t port) const
 {
-  // uTP is not implemented by this engine; always 0 (RPC schema compat).
-  return 0;
+  const auto key = peerKey(ipaddr, port);
+  auto it = utpFailStats_.find(key);
+  return it == utpFailStats_.end() ? 0 : it->second;
 }
 
 uint32_t DefaultPeerStorage::getUdpFailCount(const std::string&, uint16_t) const
 {
-  // UDP transport is not implemented by this engine; always 0.
+  // 本引擎 BT 节点传输仅 TCP 与 uTP；无独立 UDP 传输，恒为 0。
   return 0;
+}
+
+void DefaultPeerStorage::recordPeerFailure(const std::shared_ptr<Peer>& peer)
+{
+  if (!peer) {
+    return;
+  }
+  const auto key = peerKey(peer->getIPAddress(), peer->getOrigPort());
+  failStats_[key] += 1;
+  if (peer->isUtp()) {
+    utpFailStats_[key] += 1;
+  }
+  else {
+    tcpFailStats_[key] += 1;
+  }
 }
 
 size_t DefaultPeerStorage::countAllPeer() const

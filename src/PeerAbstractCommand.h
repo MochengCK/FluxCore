@@ -78,6 +78,12 @@ protected:
 
   virtual bool prepareForNextPeer(time_t wait);
   virtual void onAbort(){};
+  // 连接失败钩子：execute() 捕获 DownloadFailureException /
+  // RecoverableException（超时/EOF/协议错误等真实失败事件）时调用，
+  // 在 onAbort() 之前。子类可在此把失败计入 PeerStorage 的
+  // fails/tcpFails/utpFails 统计（RPC getPeers 暴露给前端）。
+  // 正常退出（引擎停机、任务完成的 exitBeforeExecute 路径）不会触发。
+  virtual void onConnectionFailed(){};
   // This function is called when DownloadFailureException is caught right after
   // the invocation of onAbort().
   virtual void onFailure(const Exception& err){};

@@ -82,6 +82,7 @@ private:
   std::map<std::string, uint32_t> attemptStats_;
   std::map<std::string, uint32_t> failStats_;
   std::map<std::string, uint32_t> tcpFailStats_;
+  std::map<std::string, uint32_t> utpFailStats_;
   // Active outgoing/incoming connection count per peer IP, so a single
   // abusive or fast host cannot occupy every connection slot. The map
   // is bounded by the number of distinct IPs in unusedPeers_/usedPeers_.
@@ -131,10 +132,17 @@ public:
   uint32_t getAttemptCount(const std::string& ipaddr, uint16_t port) const;
   uint32_t getFailCount(const std::string& ipaddr, uint16_t port) const;
   uint32_t getTcpFailCount(const std::string& ipaddr, uint16_t port) const;
-  // uTP/UDP transports are not implemented by this engine, so these
-  // always return 0. Kept only to preserve the RPC getPeers schema.
+  // uTP（BEP 29）连接失败计数——由 peer 命令的异常路径经
+  // recordPeerFailure 记录，RPC getPeers 暴露真实数据。
   uint32_t getUtpFailCount(const std::string& ipaddr, uint16_t port) const;
+  // 本引擎的 BT 节点传输只有 TCP 与 uTP（uTP 统计见 utpFailStats_），
+  // 不存在第三种独立 UDP 传输，该计数恒为 0（RPC schema 兼容）。
   uint32_t getUdpFailCount(const std::string& ipaddr, uint16_t port) const;
+
+  // 连接失败统计入口：peer 命令在异常路径（超时/EOF/协议错误）调用。
+  // 按对端传输类型分流：isUtp() → utpFailStats_，否则 tcpFailStats_；
+  // 同时累计 failStats_。优雅断开（对端正常关闭）不经过此入口。
+  void recordPeerFailure(const std::shared_ptr<Peer>& peer);
   
   // 保存封禁列表到文件
   void saveBannedPeers(const std::string& filename);

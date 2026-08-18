@@ -47,6 +47,7 @@
 #include "PeerConnection.h"
 #include "BtRuntime.h"
 #include "PeerStorage.h"
+#include "DefaultPeerStorage.h"
 #include "PieceStorage.h"
 #include "Option.h"
 #include "MSEHandshake.h"
@@ -251,6 +252,16 @@ void InitiatorMSEHandshakeCommand::onAbort()
       getOption()->getAsBool(PREF_BT_FORCE_ENCRYPTION) ||
       getOption()->getAsBool(PREF_BT_REQUIRE_CRYPTO)) {
     peerStorage_->returnPeer(getPeer());
+  }
+}
+
+void InitiatorMSEHandshakeCommand::onConnectionFailed()
+{
+  // MSE 握手失败（对端不回应/协议不兼容/超时）：计入 PeerStorage 失败
+  // 统计，RPC getPeers 暴露给前端。
+  if (auto defaultPeerStorage =
+          std::dynamic_pointer_cast<DefaultPeerStorage>(peerStorage_)) {
+    defaultPeerStorage->recordPeerFailure(getPeer());
   }
 }
 

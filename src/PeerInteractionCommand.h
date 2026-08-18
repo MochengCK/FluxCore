@@ -74,6 +74,7 @@ protected:
   virtual bool executeInternal() CXX11_OVERRIDE;
   virtual bool prepareForNextPeer(time_t wait) CXX11_OVERRIDE;
   virtual void onAbort() CXX11_OVERRIDE;
+  virtual void onConnectionFailed() CXX11_OVERRIDE;
   virtual void onFailure(const Exception& err) CXX11_OVERRIDE;
   virtual bool exitBeforeExecute() CXX11_OVERRIDE;
 

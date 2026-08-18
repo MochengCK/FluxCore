@@ -78,7 +78,9 @@ void DHKeyExchange::init(const unsigned char* prime, size_t primeBits,
 
 void DHKeyExchange::generatePublicKey()
 {
-  publicKey_ = generator_.mul_mod(privateKey_, prime_);
+  // DH 公钥必须是幂模 g^x mod p。此前误用 mul_mod（g*x mod p），
+  // 双方共享密钥永远无法一致，MSE 加密握手必然失败。
+  publicKey_ = generator_.pow_mod(privateKey_, prime_);
 }
 
 size_t DHKeyExchange::getPublicKey(unsigned char* out, size_t outLength) const
@@ -116,7 +118,8 @@ size_t DHKeyExchange::computeSecret(unsigned char* out, size_t outLength,
   }
 
   n peerKey(peerPublicKeyData, peerPublicKeyLength);
-  n secret = peerKey.mul_mod(privateKey_, prime_);
+  // 共享密钥 = 对端公钥^私钥 mod p（幂模）。见 generatePublicKey 注释。
+  n secret = peerKey.pow_mod(privateKey_, prime_);
   secret.binary(out, outLength);
 
   return outLength;
