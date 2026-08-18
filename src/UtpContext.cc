@@ -180,14 +180,11 @@ void UtpContext::receiveLoop()
       continue;
     }
 
+    // 按包头 connection_id 查找目标连接（BEP 29：每个端点的所有出站
+    // 包携带固定 id；连接以"我方匹配入站的 id"= recvId_ 注册）。
+    // 发起方注册 C+1 匹配响应方包；响应方注册 C 匹配发起方包（含
+    // 重发的 SYN，直接命中，无需特判）。
     UtpConnection* conn = find(hdr.connectionId);
-    if (!conn && hdr.type == ST_SYN) {
-      // SYN 重发：入站连接注册在 peerRecvId+1（我们的 recvId），而
-      // 重发的 SYN 仍携带 peerRecvId → find 必然 miss。改查 id+1，
-      // 命中即同一连接的重发 SYN，交给既有连接重发 SYN-ACK，而不是
-      // 重复建连、重复回调 acceptHandler（会产生僵尸握手命令）。
-      conn = find(static_cast<uint16_t>(hdr.connectionId + 1));
-    }
     if (conn) {
       conn->handlePacket(buf, static_cast<size_t>(n), nowUs());
       continue;

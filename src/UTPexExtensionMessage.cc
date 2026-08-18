@@ -104,12 +104,13 @@ UTPexExtensionMessage::createCompactPeerListAndFlag(
     unsigned char compact[COMPACT_LEN_IPV6];
     int compactlen = bittorrent::packcompact(compact, (*itr)->getIPAddress(),
                                              (*itr)->getPort());
-    // BEP 11 flags: 0x02 = seeder，0x01 = 支持 uTP（来自对端 PEX
-    // 声明或我们与其建立过 uTP 连接）。广播出去让其他客户端优先
-    // 走 uTP 连接这些节点。
+    // BEP 11 flags: 0x01 = prefers encryption，0x02 = seed/upload_only，
+    // 0x04 = supports uTP。广播 uTP 能力必须用 0x04 位——此前误用
+    // 0x01（加密位）会污染 PEX 网络：对端会把我们通告的 peer 误解为
+    // "偏好加密"，而真正的 uTP 能力从未传播出去。
     unsigned char flags =
         ((*itr)->isSeeder() ? 0x02u : 0x00u) |
-        ((*itr)->isUtpCapable() ? 0x01u : 0x00u);
+        ((*itr)->isUtpCapable() ? 0x04u : 0x00u);
     if (compactlen == COMPACT_LEN_IPV4) {
       addrstring.append(&compact[0], &compact[compactlen]);
       flagstring += static_cast<char>(flags);
@@ -233,14 +234,19 @@ UTPexExtensionMessage::create(const unsigned char* data, size_t len)
                               std::back_inserter(msg->droppedPeers_));
     }
     // BEP 11 flags: added.f / added6.f 每字节对应 added/added6 中同一
-    // 序号的 peer：0x01 = 支持 uTP，0x02 = seeder。解析后标记对端 uTP
-    // 能力，供出站 PEX 广播。字节数不足/多余按 min 截断容错。
+    // 序号的 peer：0x01 = prefers encryption，0x02 = seed/upload_only，
+    // 0x04 = supports uTP，0x08 = ut_holepunch。uTP 能力位是 0x04——
+    // 此前误用 0x01（加密位，现代客户端几乎全设置），导致对大量仅
+    // 支持加密而不支持 uTP 的 peer 发起注定失败的 uTP 连接（SYN 无
+    // 响应，~15s 死链超时，表现为"uTP 节点无客户端、无速度"）。
+    // 解析后标记对端 uTP 能力，供出站连接决策与 PEX 广播。
+    // 字节数不足/多余按 min 截断容错。
     const String* addedF = downcast<String>(dict->get("added.f"));
     if (addedF && !addedF->s().empty()) {
       const size_t n = std::min(addedF->s().size(), v4Count);
       for (size_t i = 0; i < n; ++i) {
         if (msg->freshPeers_[i] &&
-            (static_cast<unsigned char>(addedF->s()[i]) & 0x01u)) {
+            (static_cast<unsigned char>(addedF->s()[i]) & 0x04u)) {
           msg->freshPeers_[i]->setUtpCapable(true);
         }
       }
@@ -252,7 +258,7 @@ UTPexExtensionMessage::create(const unsigned char* data, size_t len)
       for (size_t i = 0; i < n; ++i) {
         auto& peer = msg->freshPeers_[v4Count + i];
         if (peer &&
-            (static_cast<unsigned char>(added6F->s()[i]) & 0x01u)) {
+            (static_cast<unsigned char>(added6F->s()[i]) & 0x04u)) {
           peer->setUtpCapable(true);
         }
       }

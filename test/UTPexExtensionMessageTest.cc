@@ -74,7 +74,8 @@ void UTPexExtensionMessageTest::testGetBencodedData()
   auto p1 = std::make_shared<Peer>("192.168.0.1", 6881);
   p1->allocateSessionResource(256_k, 1_m);
   p1->setAllBitfield();
-  CPPUNIT_ASSERT(msg.addFreshPeer(p1)); // added seeder, check add.f flag
+  p1->setUtpCapable(true);
+  CPPUNIT_ASSERT(msg.addFreshPeer(p1)); // added seeder+utp, check add.f flag
   auto p2 = std::make_shared<Peer>("10.1.1.2", 9999);
   CPPUNIT_ASSERT(msg.addFreshPeer(p2));
   auto p3 = std::make_shared<Peer>("192.168.0.2", 6882);
@@ -86,6 +87,7 @@ void UTPexExtensionMessageTest::testGetBencodedData()
 
   auto p5 =
       std::make_shared<Peer>("1002:1035:4527:3546:7854:1237:3247:3217", 6881);
+  p5->setUtpCapable(true);
   CPPUNIT_ASSERT(msg.addFreshPeer(p5));
   auto p6 = std::make_shared<Peer>("2001:db8:bd05:1d2:288a:1fc0:1:10ee", 6882);
   p6->startDrop();
@@ -104,11 +106,13 @@ void UTPexExtensionMessageTest::testGetBencodedData()
   bittorrent::packcompact(c5, p5->getIPAddress(), p5->getPort());
   bittorrent::packcompact(c6, p6->getIPAddress(), p6->getPort());
 
+  // p1 是 seeder(0x02) 且支持 uTP(0x04) → flags = 0x06；
+  // p5 (IPv6) 支持 uTP → added6.f flags = 0x04
   std::string expected =
       "d5:added12:" + std::string(&c1[0], &c1[6]) +
-      std::string(&c2[0], &c2[6]) + "7:added.f2:" + fromHex("0200") +
+      std::string(&c2[0], &c2[6]) + "7:added.f2:" + fromHex("0600") +
       "6:added618:" + std::string(&c5[0], &c5[COMPACT_LEN_IPV6]) +
-      "8:added6.f1:" + fromHex("00") +
+      "8:added6.f1:" + fromHex("04") +
       "7:dropped12:" + std::string(&c3[0], &c3[6]) +
       std::string(&c4[0], &c4[6]) +
       "8:dropped618:" + std::string(&c6[0], &c6[COMPACT_LEN_IPV6]) + "e";
@@ -196,12 +200,14 @@ void UTPexExtensionMessageTest::testCreate()
 
   char id[1] = {1};
 
+  // added.f: peer1 = 0x06 (seed|uTP)，peer2 = 0x02 (仅 seed/加密旧误读位
+  // ——0x02 单独存在时不得判定为 uTP 能力)；added6.f: peer3 = 0x04 (uTP)
   std::string data =
       std::string(&id[0], &id[1]) +
       "d5:added12:" + std::string(&c1[0], &c1[6]) +
-      std::string(&c2[0], &c2[6]) + "7:added.f2:" + fromHex("0200") +
+      std::string(&c2[0], &c2[6]) + "7:added.f2:" + fromHex("0602") +
       "6:added618:" + std::string(&c5[0], &c5[COMPACT_LEN_IPV6]) +
-      "8:added6.f1:" + fromHex("00") +
+      "8:added6.f1:" + fromHex("04") +
       "7:dropped12:" + std::string(&c3[0], &c3[6]) +
       std::string(&c4[0], &c4[6]) +
       "8:dropped618:" + std::string(&c6[0], &c6[COMPACT_LEN_IPV6]) + "e";
@@ -219,6 +225,13 @@ void UTPexExtensionMessageTest::testCreate()
   CPPUNIT_ASSERT_EQUAL(std::string("1002:1035:4527:3546:7854:1237:3247:3217"),
                        msg->getFreshPeers()[2]->getIPAddress());
   CPPUNIT_ASSERT_EQUAL((uint16_t)6997, msg->getFreshPeers()[2]->getPort());
+
+  // BEP 11 uTP 能力位是 0x04：带 0x04 的 peer 标记 uTP 能力，
+  // 仅 0x02（seed）/0x01（加密）的 peer 不得被误判（回归：旧代码
+  // 把 0x01 加密位误读为 uTP，制造大量必然超时的 uTP 出站连接）。
+  CPPUNIT_ASSERT(msg->getFreshPeers()[0]->isUtpCapable());
+  CPPUNIT_ASSERT(!msg->getFreshPeers()[1]->isUtpCapable());
+  CPPUNIT_ASSERT(msg->getFreshPeers()[2]->isUtpCapable());
 
   CPPUNIT_ASSERT_EQUAL((size_t)3, msg->getDroppedPeers().size());
   CPPUNIT_ASSERT_EQUAL(std::string("192.168.0.2"),

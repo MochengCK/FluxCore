@@ -44,8 +44,12 @@ namespace utp {
 
 namespace {
 
-// MTU-sized payload; uTP is designed for small datagrams.
-constexpr uint32_t DEFAULT_PACKET_SIZE = 1500;
+// Payload cap per ST_DATA packet. Must keep the full UDP datagram
+// (20B uTP header + payload + 8B UDP + 20B IPv4) below the 1500B MTU,
+// otherwise the OS IP-fragments every packet — losing any fragment
+// kills the whole datagram, and many NATs/firewalls drop fragments
+// outright. 1400 leaves headroom for extensions/PPPoE links.
+constexpr uint32_t DEFAULT_PACKET_SIZE = 1400;
 constexpr uint32_t MIN_PACKET_SIZE = 150;
 // Receive buffer cap; advertised to the peer as our flow-control window.
 constexpr uint32_t RECV_WINDOW = 256 * 1024;
@@ -87,15 +91,21 @@ UtpConnection::UtpConnection(const std::string& remoteAddr, uint16_t remotePort,
     : remoteAddr_(remoteAddr), remotePort_(remotePort)
 {
   initCommon(remoteAddr, remotePort);
-  // Initiator: random receive id, send id = receive id + 1.
-  recvId_ = static_cast<uint16_t>(rand32(nowUs));
-  sendId_ = static_cast<uint16_t>(recvId_ + 1);
+  // BEP 29：发起方随机选择连接 id C，我方所有出站包（含 SYN）都
+  // 使用 C；响应方所有出站包使用 C+1。因此匹配入站包的 recvId =
+  // C+1，出站 sendId = C。此前两者颠倒（recv=C/send=C+1）：SYN 特
+  // 券携带 recvId 碰巧正确，但 SYN-ACK 之后我方数据包带 C+1 会被
+  // 对端（期望 C）丢弃，同时对端包（C+1）也无法命中我方连接注册
+  // ——出站 uTP 与标准客户端永远无法完成握手，表现为"uTP 节点无
+  // 客户端、无速度"的死链。
+  sendId_ = static_cast<uint16_t>(rand32(nowUs));
+  recvId_ = static_cast<uint16_t>(sendId_ + 1);
   seq_ = 1;
   peerWnd_ = 0x7FFFFFFFu;
   state_ = State::SYN_SENT;
   lastRecvUs_ = 0;
   lastSendUs_ = nowUs;
-  // Queue the initial SYN (connection id = our receive id).
+  // Queue the initial SYN (carries sendId_, like all our packets).
   queueControl(ST_SYN, nowUs, 0);
 }
 
@@ -105,10 +115,12 @@ UtpConnection::UtpConnection(const std::string& remoteAddr, uint16_t remotePort,
     : remoteAddr_(remoteAddr), remotePort_(remotePort)
 {
   initCommon(remoteAddr, remotePort);
-  // Responder per spec: receive id = SYN's connection id + 1,
-  // send id = SYN's connection id, seq = random, ack = SYN seq.
-  recvId_ = static_cast<uint16_t>(peerRecvId + 1);
-  sendId_ = peerRecvId;
+  // BEP 29：响应方的入站包（对端发起方的所有包）携带 SYN 中的 id
+  // peerRecvId；我方所有出站包使用 peerRecvId + 1。seq = random，
+  // ack = SYN seq。此前 recv/send 颠倒：SYN-ACK 携带 peerRecvId 而
+  // 对端期望 +1，握手同样无法完成。
+  recvId_ = peerRecvId;
+  sendId_ = static_cast<uint16_t>(peerRecvId + 1);
   seq_ = static_cast<uint16_t>(rand32(nowUs));
   ack_ = ackNr;
   peerWnd_ = 0x7FFFFFFFu;
@@ -694,7 +706,9 @@ void UtpConnection::sendAck(uint32_t nowUs)
 void UtpConnection::queueControl(uint8_t type, uint32_t nowUs,
                                  uint16_t seqForAck)
 {
-  uint16_t connId = (type == ST_SYN) ? recvId_ : sendId_;
+  // BEP 29：connection_id 对每个端点是常量——我方所有出站包（SYN、
+  // ST_STATE、ST_DATA、ST_FIN）一律携带 sendId_。
+  uint16_t connId = sendId_;
   uint16_t seqField = (type == ST_FIN) ? finSeq_ : seq_;
   // Build with optional SACK extension when we have gaps.
   bool haveGaps = !recvReorder_.empty();
