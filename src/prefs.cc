@@ -587,6 +587,14 @@ PrefPtr PREF_BT_ENABLE_HOOK_AFTER_HASH_CHECK =
     makePref("bt-enable-hook-after-hash-check");
 // values: true | false
 PrefPtr PREF_BT_LOAD_SAVED_METADATA = makePref("bt-load-saved-metadata");
+// values: true | false
+PrefPtr PREF_BT_AUTO_BAN_PEER = makePref("bt-auto-ban-peer");
+// values: true | false
+PrefPtr PREF_BT_AUTO_BAN_BAD_DATA = makePref("bt-auto-ban-bad-data");
+// values: true | false
+PrefPtr PREF_BT_AUTO_BAN_ZERO_PROGRESS = makePref("bt-auto-ban-zero-progress");
+// values: true | false
+PrefPtr PREF_BT_AUTO_BAN_SNUBBING = makePref("bt-auto-ban-snubbing");
 
 /**
  * Metalink related preferences

@@ -1642,6 +1642,8 @@ std::unique_ptr<ValueBase> GetPeersRpcMethod::process(const RpcRequest& req,
         peerEntry->put(KEY_PROTOCOL, "tcp");
         // 按实际来源设置 source 字段
         peerEntry->put(KEY_SOURCE, banSource);
+        // 返回具体封禁原因
+        peerEntry->put("banReason", entry.second.reason);
         peerEntry->put(KEY_ENGINE_STATUS, "banned");
         // 已封禁，无活跃连接，加密状态无意义，返回 null
         peerEntry->put(KEY_ENCRYPTED, Null::g());
@@ -1880,10 +1882,10 @@ std::unique_ptr<ValueBase> BanPeerRpcMethod::process(const RpcRequest& req,
     }
     
     // 使用手动封禁接口，标记来源为 manual
-    defaultPeerStorage->addBadPeerManual(ip, expireTime);
+    defaultPeerStorage->addBadPeerManual(ip, expireTime, "manual");
   } else {
     // 如果不是DefaultPeerStorage，使用默认的addBadPeer
-    btObject->peerStorage->addBadPeer(ip);
+    btObject->peerStorage->addBadPeer(ip, "manual");
   }
   
   // 统计被封禁IP的连接数

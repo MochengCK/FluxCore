@@ -139,7 +139,7 @@ void BtPieceMessage::doReceivedAction()
       }
       else {
         onWrongPiece(piece);
-        peerStorage_->addBadPeer(getPeer()->getIPAddress());
+        peerStorage_->addBadPeer(getPeer()->getIPAddress(), "bad_data");
         throw DL_ABORT_EX("Bad piece hash.");
       }
     }

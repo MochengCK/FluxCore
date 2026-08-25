@@ -54,6 +54,7 @@
 #include "wallclock.h"
 #include "util.h"
 #include "fmt.h"
+#include "DownloadEngine.h"
 
 namespace aria2 {
 
@@ -134,6 +135,10 @@ bool ActivePeerConnectionCommand::execute()
         evictIdlePeer();
       }
 
+      // 行为封禁策略：不依赖连接数上限，在每轮 tick 中检查
+      evictZeroProgressPeer();
+      evictSnubbingPeer();
+
       if (btRuntime_->getConnections() == 0 &&
           !pieceStorage_->downloadFinished()) {
         btAnnounce_->overrideMinInterval(BtAnnounce::DEFAULT_ANNOUNCE_INTERVAL);
@@ -146,6 +151,13 @@ bool ActivePeerConnectionCommand::execute()
 
 void ActivePeerConnectionCommand::evictIdlePeer()
 {
+  // 检查自动封禁开关：用户可在偏好设置中关闭此功能
+  const auto& opt = requestGroup_->getOption();
+  if (opt->defined(PREF_BT_AUTO_BAN_PEER) &&
+      opt->get(PREF_BT_AUTO_BAN_PEER) == A2_V_FALSE) {
+    return;
+  }
+
   // 节流：最多每 30 秒淘汰一个，避免连续淘汰造成连接抖动。
   if (lastSlowEviction_.difference(global::wallclock()) < 30_s) {
     return;
@@ -161,18 +173,132 @@ void ActivePeerConnectionCommand::evictIdlePeer()
     if (!peer->isActive()) {
       continue;
     }
-    // 判据：接入超过 60 秒、当前下载速度为 0。
+    // 判据：接入超过 120 秒、当前下载速度为 0。
+    // 原为 60 秒，提高到 120 秒以减少误封正常但短暂空闲的节点
+    // （如对方正在切换 piece 或拥塞窗口调整）。
     if (peer->calculateDownloadSpeed() != 0) {
       continue;
     }
-    if (now.difference(peer->getFirstContactTime()) < 60_s) {
+    if (now.difference(peer->getFirstContactTime()) < 120_s) {
       continue;
     }
     // 封禁 IP：PeerInteractionCommand 每轮执行时会检查 isBadPeer，
     // 命中即关闭该连接并放回节点池；封禁 2~10 分钟后节点可回归。
-    defaultPeerStorage->addBadPeer(peer->getIPAddress());
+    defaultPeerStorage->addBadPeer(peer->getIPAddress(), "idle");
     lastSlowEviction_ = now;
-    A2_LOG_INFO(fmt("Evicting idle peer %s:%u (0 B/s for >=60s, at peer cap)",
+    A2_LOG_INFO(fmt("Evicting idle peer %s:%u (0 B/s for >=120s, at peer cap)",
+                    peer->getIPAddress().c_str(), peer->getPort()));
+    return; // 每轮一个
+  }
+}
+
+void ActivePeerConnectionCommand::evictZeroProgressPeer()
+{
+  // 检查开关：用户可在偏好设置中关闭此功能
+  const auto& opt = requestGroup_->getOption();
+  if (opt->defined(PREF_BT_AUTO_BAN_ZERO_PROGRESS) &&
+      opt->get(PREF_BT_AUTO_BAN_ZERO_PROGRESS) == A2_V_FALSE) {
+    return;
+  }
+
+  // 节流：最多每 60 秒淘汰一个，避免频繁检查
+  if (lastZeroProgressEviction_.difference(global::wallclock()) < 60_s) {
+    return;
+  }
+
+  auto defaultPeerStorage =
+      std::dynamic_pointer_cast<DefaultPeerStorage>(peerStorage_);
+  if (!defaultPeerStorage) {
+    return;
+  }
+
+  const auto& usedPeers = peerStorage_->getUsedPeers();
+  const auto now = global::wallclock();
+
+  for (const auto& peer : usedPeers) {
+    if (!peer->isActive()) {
+      continue;
+    }
+
+    // 判据：连接超过 180 秒、我们正在向对方上传（uploadSpeed > 0）、
+    // 但对方下载完成量始终为 0（零进度）。
+    // 180 秒宽限期确保正常节点有足够时间开始下载首个 piece。
+    if (now.difference(peer->getFirstContactTime()) < 180_s) {
+      continue;
+    }
+
+    // 必须是我们正在向其上传的节点
+    if (peer->calculateUploadSpeed() == 0) {
+      continue;
+    }
+
+    // 对方下载完成量为 0 说明它从未从我们这里获得有效数据
+    if (peer->getSessionDownloadLength() > 0 ||
+        peer->getCompletedLength() > 0) {
+      continue;
+    }
+
+    // 跳过 seeder（做种者），它们没有下载需求
+    if (peer->isSeeder()) {
+      continue;
+    }
+
+    defaultPeerStorage->addBadPeer(peer->getIPAddress(), "zero_progress");
+    lastZeroProgressEviction_ = now;
+    A2_LOG_INFO(fmt("Evicting zero-progress peer %s:%u "
+                    "(uploading but 0 completed in >=180s)",
+                    peer->getIPAddress().c_str(), peer->getPort()));
+    return; // 每轮一个
+  }
+}
+
+void ActivePeerConnectionCommand::evictSnubbingPeer()
+{
+  // 检查开关：用户可在偏好设置中关闭此功能
+  const auto& opt = requestGroup_->getOption();
+  if (opt->defined(PREF_BT_AUTO_BAN_SNUBBING) &&
+      opt->get(PREF_BT_AUTO_BAN_SNUBBING) == A2_V_FALSE) {
+    return;
+  }
+
+  // 复用 lastSlowEviction_ 节流，但使用更长的间隔
+  if (lastSlowEviction_.difference(global::wallclock()) < 45_s) {
+    return;
+  }
+
+  auto defaultPeerStorage =
+      std::dynamic_pointer_cast<DefaultPeerStorage>(peerStorage_);
+  if (!defaultPeerStorage) {
+    return;
+  }
+
+  const auto& usedPeers = peerStorage_->getUsedPeers();
+  const auto now = global::wallclock();
+
+  for (const auto& peer : usedPeers) {
+    if (!peer->isActive()) {
+      continue;
+    }
+
+    // 判据：节点被标记为 snubbing 状态（引擎已有此标志），
+    // 且持续超过 90 秒。snubbing 标志由 PeerInteractionCommand
+    // 在对方未响应 piece 请求时设置。
+    if (!peer->snubbing()) {
+      continue;
+    }
+
+    if (now.difference(peer->getFirstContactTime()) < 90_s) {
+      continue;
+    }
+
+    // 下载速度为 0，确认确实未发送数据
+    if (peer->calculateDownloadSpeed() != 0) {
+      continue;
+    }
+
+    defaultPeerStorage->addBadPeer(peer->getIPAddress(), "snubbing");
+    lastSlowEviction_ = now;
+    A2_LOG_INFO(fmt("Evicting snubbing peer %s:%u (snubbing for >=90s)",
                     peer->getIPAddress().c_str(), peer->getPort()));
     return; // 每轮一个
   }

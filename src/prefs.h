@@ -527,6 +527,20 @@ extern PrefPtr PREF_BT_FORCE_ENCRYPTION;
 extern PrefPtr PREF_BT_ENABLE_HOOK_AFTER_HASH_CHECK;
 // values: true | false
 extern PrefPtr PREF_BT_LOAD_SAVED_METADATA;
+// values: true | false — auto-ban idle peers that contribute zero download
+// speed for an extended period when the peer cap is reached.
+extern PrefPtr PREF_BT_AUTO_BAN_PEER;
+// values: true | false — auto-ban peers that send invalid piece data
+// (piece hash verification fails). Default on.
+extern PrefPtr PREF_BT_AUTO_BAN_BAD_DATA;
+// values: true | false — auto-ban peers that keep requesting upload from us
+// but never make progress on their own download (zero completed bytes over
+// an extended period while uploading to them). Default on.
+extern PrefPtr PREF_BT_AUTO_BAN_ZERO_PROGRESS;
+// values: true | false — auto-ban snubbing peers (peers that advertise
+// pieces but fail to send requested block data within a timeout).
+// Default on.
+extern PrefPtr PREF_BT_AUTO_BAN_SNUBBING;
 
 /**
  * ED2K related preferences

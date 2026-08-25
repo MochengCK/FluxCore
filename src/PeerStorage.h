@@ -102,8 +102,10 @@ public:
 
   /**
    * Adds peer with ipaddr in bad peer set.
+   * reason optionally describes why the peer was banned.
    */
-  virtual void addBadPeer(const std::string& ipaddr) = 0;
+  virtual void addBadPeer(const std::string& ipaddr,
+                           const std::string& reason = "") = 0;
 
   /**
    * Moves first peer in unused peer list to used peer set and calls

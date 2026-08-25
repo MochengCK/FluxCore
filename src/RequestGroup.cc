@@ -370,6 +370,7 @@ void RequestGroup::createInitialCommand(
     auto peerStorage = std::make_shared<DefaultPeerStorage>();
     peerStorage->setBtRuntime(btRuntime);
     peerStorage->setPieceStorage(pieceStorage_);
+    peerStorage->setOption(option_.get());
     
     // 加载封禁列表 - 使用.aria2配置目录而不是下载目录
     std::string sessionDir = option_->get(PREF_DIR);
@@ -415,7 +416,7 @@ void RequestGroup::createInitialCommand(
           if (ip.empty()) {
             continue;
           }
-          defaultPeerStorage->addBadPeer(ip);
+          defaultPeerStorage->addBadPeer(ip, "ban_list");
         }
       }
     }

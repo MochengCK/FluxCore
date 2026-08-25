@@ -63,7 +63,8 @@ private:
   DownloadEngine* e_;
   Timer checkPoint_;
   int numNewConnection_; // the number of the connection to establish.
-  Timer lastSlowEviction_; // throttle: evict at most one idle peer per 30s
+  Timer lastSlowEviction_; // throttle: evict at most one bad peer per 30s
+  Timer lastZeroProgressEviction_; // throttle for zero-progress eviction
   bool firstTick_ = true;  // 冷启动突发：首个 tick 一次性发起 3 倍连接
 public:
   ActivePeerConnectionCommand(cuid_t cuid, RequestGroup* requestGroup,
@@ -77,8 +78,18 @@ public:
 
   // 慢速节点淘汰：连接数达上限且仍需更多源时，封禁"长时间零下载"
   // 的最差节点，为新连接腾名额。每轮最多一个，受 lastSlowEviction_
-  // 节流。
+  // 节流。受 PREF_BT_AUTO_BAN_PEER 开关控制。
   void evictIdlePeer();
+
+  // 零进度淘汰：节点持续向我们请求上传数据（peerInterested && !amChoking），
+  // 但其自身下载完成量为 0 且连接时间超过阈值，说明对方可能是吸血
+  // (leech) 客户端或异常客户端。受 PREF_BT_AUTO_BAN_ZERO_PROGRESS 开关控制。
+  void evictZeroProgressPeer();
+
+  // Snubbing 节点淘汰：节点声明拥有某些 piece 且对我们感兴趣，
+  // 但在被 unchoke 后超过 60 秒未发送任何 piece 数据。受
+  // PREF_BT_AUTO_BAN_SNUBBING 开关控制。
+  void evictSnubbingPeer();
 
   void setNumNewConnection(int numNewConnection)
   {

@@ -44,6 +44,8 @@
 
 namespace aria2 {
 
+class Option;
+
 class BtRuntime;
 class BtSeederStateChoke;
 class BtLeecherStateChoke;
@@ -51,15 +53,18 @@ class PieceStorage;
 
 class DefaultPeerStorage : public PeerStorage {
 private:
-  // 封禁来源标记："auto" = 引擎自动封禁（空闲淘汰/坏数据等），
-  // "manual" = 用户通过 RPC 手动封禁
+  // 封禁来源标记：“auto” = 引擎自动封禁（空闲淘汰/坏数据等），
+  // “manual” = 用户通过 RPC 手动封禁
   struct BadPeerEntry {
     Timer expireTime;
     std::string source; // "auto" or "manual"
+    std::string reason; // 具体封禁原因（如 "idle", "bad_data", "manual", "ban_list"）
   };
 
   std::shared_ptr<BtRuntime> btRuntime_;
   std::shared_ptr<PieceStorage> pieceStorage_;
+  // 非拥有指针，由 setOption 设置，用于检查各策略开关
+  const Option* option_ = nullptr;
   size_t maxPeerListSize_;
 
   // This contains ip address and port pair and is used to ensure that
@@ -131,14 +136,19 @@ public:
 
   virtual bool isBadPeer(const std::string& ipaddr) CXX11_OVERRIDE;
 
-  virtual void addBadPeer(const std::string& ipaddr) CXX11_OVERRIDE;
+  virtual void addBadPeer(const std::string& ipaddr,
+                           const std::string& reason = "") CXX11_OVERRIDE;
 
   // 手动封禁：由 RPC BanPeer 调用，标记来源为 manual
-  void addBadPeerManual(const std::string& ipaddr, const Timer& expireTime);
+  void addBadPeerManual(const std::string& ipaddr, const Timer& expireTime,
+                         const std::string& reason = "manual");
 
   void removeBadPeer(const std::string& ipaddr) { badPeers_.erase(ipaddr); }
 
   const std::map<std::string, BadPeerEntry>& getBadPeers() const { return badPeers_; }
+
+  // 设置 Option 指针（非拥有），用于 addBadPeer 中的策略开关检查
+  void setOption(const Option* opt) { option_ = opt; }
   uint32_t getAttemptCount(const std::string& ipaddr, uint16_t port) const;
   uint32_t getFailCount(const std::string& ipaddr, uint16_t port) const;
   uint32_t getTcpFailCount(const std::string& ipaddr, uint16_t port) const;
