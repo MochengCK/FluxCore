@@ -393,6 +393,12 @@ public:
   void
   loadAndOpenFile(const std::shared_ptr<BtProgressInfoFile>& progressInfoFile);
 
+  // Eagerly load download progress from the control (.xfer) file if it
+  // exists, without opening the target file or any network activity.
+  // Used at session restore so paused downloads report their real
+  // progress before being resumed.
+  void preloadProgressFromControlFile();
+
   void shouldCancelDownloadForSafety();
 
   void adjustFilename(const std::shared_ptr<BtProgressInfoFile>& infoFile);

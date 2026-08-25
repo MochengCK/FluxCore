@@ -276,6 +276,12 @@ Context::Context(bool standalone, int argc, char** argv, const KeyVals& options)
       }
       else {
         createRequestGroupForUriList(requestGroups, op);
+        // Restored downloads from a session (--input-file) stay paused with
+        // zero reported progress until resumed. Preload real progress from
+        // each control file so RPC status reports it immediately.
+        for (auto& rg : requestGroups) {
+          rg->preloadProgressFromControlFile();
+        }
       }
 #if defined(ENABLE_BITTORRENT) || defined(ENABLE_METALINK)
     }

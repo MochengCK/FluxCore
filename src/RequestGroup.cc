@@ -880,6 +880,41 @@ void RequestGroup::shouldCancelDownloadForSafety()
   A2_LOG_NOTICE(fmt(MSG_FILE_RENAMED, getFirstFilePath().c_str()));
 }
 
+// Load progress from the control file if it exists, keeping the download
+// paused. Only piece storage/bitfield is initialized; the target file is
+// neither allocated nor opened, and no network activity occurs. The normal
+// start path (loadAndOpenFile) loads again and opens the file when the
+// download is actually resumed.
+void RequestGroup::preloadProgressFromControlFile()
+{
+  if (pieceStorage_) {
+    return;
+  }
+  const std::string firstPath = getFirstFilePath();
+  if (firstPath.empty()) {
+    return;
+  }
+  const std::string ctrlFile =
+      firstPath + DefaultBtProgressInfoFile::getSuffix();
+  if (!File(ctrlFile).exists()) {
+    return;
+  }
+  try {
+    initPieceStorage();
+    auto infoFile = std::make_shared<DefaultBtProgressInfoFile>(
+        downloadContext_, pieceStorage_, option_.get());
+    infoFile->load();
+    A2_LOG_INFO(fmt("Preloaded progress from control file %s: %" PRId64
+                    "/%" PRId64 " bytes",
+                    ctrlFile.c_str(), getCompletedLength(), getTotalLength()));
+  }
+  catch (RecoverableException& e) {
+    A2_LOG_WARN(fmt("Failed to preload progress from control file %s: %s",
+                    ctrlFile.c_str(), e.what()));
+    dropPieceStorage();
+  }
+}
+
 void RequestGroup::tryAutoFileRenaming()
 {
   if (!option_->getAsBool(PREF_AUTO_FILE_RENAMING)) {
