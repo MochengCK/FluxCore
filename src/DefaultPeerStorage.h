@@ -71,7 +71,13 @@ private:
 
   Timer lastTransferStatMapUpdated_;
 
-  std::map<std::string, Timer> badPeers_;
+  // 封禁来源标记："auto" = 引擎自动封禁（空闲淘汰/坏数据等），
+  // "manual" = 用户通过 RPC 手动封禁
+  struct BadPeerEntry {
+    Timer expireTime;
+    std::string source; // "auto" or "manual"
+  };
+  std::map<std::string, BadPeerEntry> badPeers_;
   Timer lastBadPeerCleaned_;
 
   bool isPeerAlreadyAdded(const std::shared_ptr<Peer>& peer);
@@ -126,9 +132,12 @@ public:
 
   virtual void addBadPeer(const std::string& ipaddr) CXX11_OVERRIDE;
 
+  // 手动封禁：由 RPC BanPeer 调用，标记来源为 manual
+  void addBadPeerManual(const std::string& ipaddr, const Timer& expireTime);
+
   void removeBadPeer(const std::string& ipaddr) { badPeers_.erase(ipaddr); }
 
-  const std::map<std::string, Timer>& getBadPeers() const { return badPeers_; }
+  const std::map<std::string, BadPeerEntry>& getBadPeers() const { return badPeers_; }
   uint32_t getAttemptCount(const std::string& ipaddr, uint16_t port) const;
   uint32_t getFailCount(const std::string& ipaddr, uint16_t port) const;
   uint32_t getTcpFailCount(const std::string& ipaddr, uint16_t port) const;

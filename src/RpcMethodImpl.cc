@@ -1608,9 +1608,10 @@ std::unique_ptr<ValueBase> GetPeersRpcMethod::process(const RpcRequest& req,
     int returnedCount = 0;
     for (auto& entry : badPeers) {
       const std::string& ip = entry.first;
-      const Timer& expireTime = entry.second;
+      const Timer& expireTime = entry.second.expireTime;
+      const std::string& banSource = entry.second.source;
       
-      A2_LOG_DEBUG(fmt("GetPeers: Checking banned IP %s", ip.c_str()));
+      A2_LOG_DEBUG(fmt("GetPeers: Checking banned IP %s (source=%s)", ip.c_str(), banSource.c_str()));
       
       // 只返回未过期的封禁节点
       if (expireTime > now) {
@@ -1639,15 +1640,16 @@ std::unique_ptr<ValueBase> GetPeersRpcMethod::process(const RpcRequest& req,
         auto remainingSeconds = std::chrono::duration_cast<std::chrono::seconds>(diff).count();
         peerEntry->put("remainingTime", Integer::g(remainingSeconds));
         peerEntry->put(KEY_PROTOCOL, "tcp");
-        peerEntry->put(KEY_SOURCE, "manual");
+        // 按实际来源设置 source 字段
+        peerEntry->put(KEY_SOURCE, banSource);
         peerEntry->put(KEY_ENGINE_STATUS, "banned");
         // 已封禁，无活跃连接，加密状态无意义，返回 null
         peerEntry->put(KEY_ENCRYPTED, Null::g());
 
         bannedPeers->append(std::move(peerEntry));
         returnedCount++;
-        A2_LOG_DEBUG(fmt("GetPeers: Added banned IP %s with %ld seconds remaining", 
-                         ip.c_str(), static_cast<long>(remainingSeconds)));
+        A2_LOG_DEBUG(fmt("GetPeers: Added banned IP %s with %ld seconds remaining (source=%s)", 
+                         ip.c_str(), static_cast<long>(remainingSeconds), banSource.c_str()));
       } else {
         A2_LOG_DEBUG(fmt("GetPeers: Skipped expired ban for %s", ip.c_str()));
       }
@@ -1845,17 +1847,17 @@ std::unique_ptr<ValueBase> BanPeerRpcMethod::process(const RpcRequest& req,
   // 首先添加到封禁列表，防止重新连接
   auto defaultPeerStorage = std::dynamic_pointer_cast<DefaultPeerStorage>(btObject->peerStorage);
   if (defaultPeerStorage) {
-    auto& badPeers = const_cast<std::map<std::string, Timer>&>(defaultPeerStorage->getBadPeers());
+    auto& badPeers = const_cast<std::map<std::string, DefaultPeerStorage::BadPeerEntry>&>(defaultPeerStorage->getBadPeers());
     auto now = global::wallclock();
     
     Timer expireTime;
     
     // 检查是否已经存在封禁记录
     auto it = badPeers.find(ip);
-    if (it != badPeers.end() && it->second > now) {
+    if (it != badPeers.end() && it->second.expireTime > now) {
       // 已存在且未过期，在现有时间基础上累加
       if (duration > 0) {
-        expireTime = it->second;
+        expireTime = it->second.expireTime;
         expireTime.advance(std::chrono::seconds(duration));
         A2_LOG_DEBUG(fmt("Extended ban for peer %s by %lld seconds", ip.c_str(), (long long)duration));
       } else {
@@ -1876,8 +1878,8 @@ std::unique_ptr<ValueBase> BanPeerRpcMethod::process(const RpcRequest& req,
       A2_LOG_DEBUG(fmt("Banned peer %s for %lld seconds", ip.c_str(), (long long)duration));
     }
     
-    // 设置过期时间
-    badPeers[ip] = std::move(expireTime);
+    // 使用手动封禁接口，标记来源为 manual
+    defaultPeerStorage->addBadPeerManual(ip, expireTime);
   } else {
     // 如果不是DefaultPeerStorage，使用默认的addBadPeer
     btObject->peerStorage->addBadPeer(ip);

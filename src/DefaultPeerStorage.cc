@@ -338,7 +338,7 @@ bool DefaultPeerStorage::isBadPeer(const std::string& ipaddr)
     return false;
   }
 
-  if ((*i).second <= global::wallclock()) {
+  if ((*i).second.expireTime <= global::wallclock()) {
     badPeers_.erase(i);
     return false;
   }
@@ -350,7 +350,7 @@ void DefaultPeerStorage::addBadPeer(const std::string& ipaddr)
 {
   if (lastBadPeerCleaned_.difference(global::wallclock()) >= 1_h) {
     for (auto i = std::begin(badPeers_); i != std::end(badPeers_);) {
-      if ((*i).second <= global::wallclock()) {
+      if ((*i).second.expireTime <= global::wallclock()) {
         A2_LOG_DEBUG(fmt("Purge %s from bad peer", (*i).first.c_str()));
         badPeers_.erase(i++);
         // badPeers_.end() will not be invalidated.
@@ -361,13 +361,20 @@ void DefaultPeerStorage::addBadPeer(const std::string& ipaddr)
     }
     lastBadPeerCleaned_ = global::wallclock();
   }
-  A2_LOG_DEBUG(fmt("Added %s as bad peer", ipaddr.c_str()));
+  A2_LOG_DEBUG(fmt("Added %s as bad peer (auto)", ipaddr.c_str()));
   // We use variable timeout to avoid many bad peers wake up at once.
   auto t = global::wallclock();
   t.advance(std::chrono::seconds(
       std::max(SimpleRandomizer::getInstance()->getRandomNumber(601), 120L)));
 
-  badPeers_[ipaddr] = std::move(t);
+  badPeers_[ipaddr] = BadPeerEntry{std::move(t), "auto"};
+}
+
+void DefaultPeerStorage::addBadPeerManual(const std::string& ipaddr,
+                                         const Timer& expireTime)
+{
+  // 手动封禁不清理过期项（BanPeerRpcMethod 已自行处理累加逻辑）
+  badPeers_[ipaddr] = BadPeerEntry{expireTime, "manual"};
 }
 
 void DefaultPeerStorage::deleteUnusedPeer(size_t delSize)
@@ -556,7 +563,8 @@ void DefaultPeerStorage::saveBannedPeers(const std::string& filename)
     
     for (const auto& entry : badPeers_) {
       const std::string& ip = entry.first;
-      const Timer& expireTime = entry.second;
+      const Timer& expireTime = entry.second.expireTime;
+      const std::string& source = entry.second.source;
       
       // 只保存未过期的封禁
       if (expireTime > now) {
@@ -565,13 +573,13 @@ void DefaultPeerStorage::saveBannedPeers(const std::string& filename)
         auto remaining = now.difference(expireTime);
         int64_t remainingSeconds = std::chrono::duration_cast<std::chrono::seconds>(remaining).count();
         
-        A2_LOG_DEBUG(fmt("Checking peer %s: remaining=%ld seconds", 
-                         ip.c_str(), static_cast<long>(remainingSeconds)));
+        A2_LOG_DEBUG(fmt("Checking peer %s: remaining=%ld seconds, source=%s", 
+                         ip.c_str(), static_cast<long>(remainingSeconds), source.c_str()));
         
         // 再次检查剩余时间是否大于0
         if (remainingSeconds > 0) {
-          // 格式：IP 剩余秒数，使用std::endl确保换行
-          ofs << ip << " " << remainingSeconds << std::endl;
+          // 格式：IP 剩余秒数 来源，使用std::endl确保换行
+          ofs << ip << " " << remainingSeconds << " " << source << std::endl;
           savedCount++;
           A2_LOG_INFO(fmt("Saved banned peer %s with %ld seconds remaining", 
                           ip.c_str(), static_cast<long>(remainingSeconds)));
@@ -646,24 +654,36 @@ void DefaultPeerStorage::loadBannedPeers(const std::string& filename)
       std::string ip;
       int64_t remainingSeconds;
       
-      if (iss >> ip >> remainingSeconds) {
-        A2_LOG_DEBUG(fmt("Line %d: parsed IP='%s', remaining=%ld seconds", 
-                         lineNumber, ip.c_str(), static_cast<long>(remainingSeconds)));
-        
-        if (remainingSeconds > 0) {
-          Timer expireTime = now;
-          expireTime.advance(std::chrono::seconds(remainingSeconds));
-          badPeers_[ip] = std::move(expireTime);
-          loadedCount++;
-          A2_LOG_INFO(fmt("Loaded banned peer %s with %ld seconds remaining", 
-                          ip.c_str(), static_cast<long>(remainingSeconds)));
-        } else {
-          skippedCount++;
-          A2_LOG_DEBUG(fmt("Skipped expired ban for %s (remaining: %ld)", 
-                           ip.c_str(), static_cast<long>(remainingSeconds)));
+      std::string source;
+      if (iss >> ip >> remainingSeconds >> source) {
+        // V2 格式：IP 剩余秒数 来源
+        if (source != "auto" && source != "manual") {
+          source = "auto"; // 默认值
         }
       } else {
-        A2_LOG_WARN(fmt("Line %d: failed to parse line: '%s'", lineNumber, line.c_str()));
+        // 回退到 V1 格式：IP 剩余秒数（无来源字段）
+        std::istringstream iss2(line);
+        if (!(iss2 >> ip >> remainingSeconds)) {
+          A2_LOG_WARN(fmt("Line %d: failed to parse line: '%s'", lineNumber, line.c_str()));
+          continue;
+        }
+        source = "auto"; // 旧格式默认为自动
+      }
+      
+      A2_LOG_DEBUG(fmt("Line %d: parsed IP='%s', remaining=%ld seconds, source=%s", 
+                       lineNumber, ip.c_str(), static_cast<long>(remainingSeconds), source.c_str()));
+      
+      if (remainingSeconds > 0) {
+        Timer expireTime = now;
+        expireTime.advance(std::chrono::seconds(remainingSeconds));
+        badPeers_[ip] = BadPeerEntry{std::move(expireTime), source};
+        loadedCount++;
+        A2_LOG_INFO(fmt("Loaded banned peer %s with %ld seconds remaining (source=%s)", 
+                        ip.c_str(), static_cast<long>(remainingSeconds), source.c_str()));
+      } else {
+        skippedCount++;
+        A2_LOG_DEBUG(fmt("Skipped expired ban for %s (remaining: %ld)", 
+                         ip.c_str(), static_cast<long>(remainingSeconds)));
       }
     }
     

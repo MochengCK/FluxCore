@@ -1,12 +1,12 @@
 /* confdefs.h */
 #define PACKAGE_NAME "XferCore"
 #define PACKAGE_TARNAME "xfercore"
-#define PACKAGE_VERSION "1.6.0"
-#define PACKAGE_STRING "XferCore 1.6.0"
+#define PACKAGE_VERSION "1.6.1"
+#define PACKAGE_STRING "XferCore 1.6.1"
 #define PACKAGE_BUGREPORT "https://github.com/aria2/aria2/issues"
 #define PACKAGE_URL "https://aria2.github.io/"
 #define PACKAGE "xfercore"
-#define VERSION "1.6.0"
+#define VERSION "1.6.1"
 #define HAVE_STDIO_H 1
 #define HAVE_STDLIB_H 1
 #define HAVE_STRING_H 1
