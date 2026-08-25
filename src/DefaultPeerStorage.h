@@ -71,12 +71,6 @@ private:
 
   Timer lastTransferStatMapUpdated_;
 
-  // 封禁来源标记："auto" = 引擎自动封禁（空闲淘汰/坏数据等），
-  // "manual" = 用户通过 RPC 手动封禁
-  struct BadPeerEntry {
-    Timer expireTime;
-    std::string source; // "auto" or "manual"
-  };
   std::map<std::string, BadPeerEntry> badPeers_;
   Timer lastBadPeerCleaned_;
 
@@ -102,6 +96,13 @@ private:
   void erasePeerStats(const std::string& ipaddr, uint16_t port);
 
 public:
+  // 封禁来源标记："auto" = 引擎自动封禁（空闲淘汰/坏数据等），
+  // "manual" = 用户通过 RPC 手动封禁
+  struct BadPeerEntry {
+    Timer expireTime;
+    std::string source; // "auto" or "manual"
+  };
+
   DefaultPeerStorage();
 
   virtual ~DefaultPeerStorage();
