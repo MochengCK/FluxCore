@@ -1847,7 +1847,8 @@ std::unique_ptr<ValueBase> BanPeerRpcMethod::process(const RpcRequest& req,
   // 首先添加到封禁列表，防止重新连接
   auto defaultPeerStorage = std::dynamic_pointer_cast<DefaultPeerStorage>(btObject->peerStorage);
   if (defaultPeerStorage) {
-    auto& badPeers = const_cast<std::map<std::string, DefaultPeerStorage::BadPeerEntry>&>(defaultPeerStorage->getBadPeers());
+    const auto& badPeersRef = defaultPeerStorage->getBadPeers();
+    auto& badPeers = const_cast<decltype(badPeersRef)&>(badPeersRef);
     auto now = global::wallclock();
     
     Timer expireTime;
