@@ -286,7 +286,7 @@ jobs:
         ls -la "$OUT_DIR"
         ls -la "$OUT_DIR/lib" 2>/dev/null || echo "No lib directory (static binary)"
     - name: Upload artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: FluxCore-linux-${{ matrix.arch }}
         path: dist/FluxCore-linux-${{ matrix.arch }}
@@ -618,7 +618,7 @@ jobs:
           ./xfercore -v
         fi
     - name: Upload artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: FluxCore-macos-${{ matrix.arch }}
         path: dist/FluxCore-macos-${{ matrix.arch }}/
@@ -767,7 +767,7 @@ jobs:
       run: |
         ./src/xfercore.exe -v
     - name: Upload artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: FluxCore-windows-${{ matrix.arch }}
         path: ${{ env.FLUXCORE_DIR }}/src/xfercore.exe
