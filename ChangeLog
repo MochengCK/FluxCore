@@ -1,3 +1,16 @@
+2026-08-30  XferCore Development Team
+
+	Release XferCore 1.6.4
+	
+	* Version bump from 1.6.3 to 1.6.4
+	* Fixed uTP connection_id scheme to comply with BEP 29 / libtorrent:
+	  initiator/responder send/recv ids were swapped, so uTP handshakes
+	  with standard clients always failed and fell back to TCP
+	* Added SYN-retransmit routing and a standalone uTP protocol self-test
+	* General improvements and bug fixes
+
+---
+
 2026-06-18  FluxCore Development Team
 
 	Release FluxCore 1.2.2

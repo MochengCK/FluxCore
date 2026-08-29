@@ -95,15 +95,19 @@ UtpConnection::UtpConnection(const std::string& remoteAddr, uint16_t remotePort,
     : remoteAddr_(remoteAddr), remotePort_(remotePort)
 {
   initCommon(remoteAddr, remotePort);
-  // BEP 29：发起方随机选择连接 id C，我方所有出站包（含 SYN）都
-  // 使用 C；响应方所有出站包使用 C+1。因此匹配入站包的 recvId =
-  // C+1，出站 sendId = C。此前两者颠倒（recv=C/send=C+1）：SYN 特
-  // 券携带 recvId 碰巧正确，但 SYN-ACK 之后我方数据包带 C+1 会被
-  // 对端（期望 C）丢弃，同时对端包（C+1）也无法命中我方连接注册
-  // ——出站 uTP 与标准客户端永远无法完成握手，表现为"uTP 节点无
-  // 客户端、无速度"的死链。
+  // BEP 29 / libtorrent（utp_socket_manager::new_utp_socket + send_syn）：
+  // 出站连接 send_id = random，recv_id = send_id - 1。
+  // SYN 特殊：携带 recv_id（"期望收到 SYN-ACK 的 id"）；之后我方所有
+  // 包携带 send_id（= recv_id + 1）。对端（响应方）据此以 SYN.conn_id
+  // 作为其 send_id、SYN.conn_id + 1 作为其 recv_id：
+  //   - 对端回复携带 SYN.conn_id = 我方 recv_id → 命中本连接注册键；
+  //   - 我方数据包携带 send_id = recv_id + 1 = 对端 recv_id → 对端接受。
+  // 此前实现 sendId_=rand、recvId_=sendId_+1 且 SYN/数据都带 sendId_：
+  // 对端回复（携带 sendId_）匹配不到注册在 sendId_+1 的连接，我方数据
+  // （携带 sendId_）也被对端（期望 sendId_+1）丢弃——与任何标准客户端
+  // 都无法完成握手，表现为"uTP 连接无客户端、无速度"后全部回退 TCP。
   sendId_ = static_cast<uint16_t>(rand32(nowUs));
-  recvId_ = static_cast<uint16_t>(sendId_ + 1);
+  recvId_ = static_cast<uint16_t>(sendId_ - 1);
   seq_ = 1;
   peerWnd_ = 0x7FFFFFFFu;
   state_ = State::SYN_SENT;
@@ -113,7 +117,7 @@ UtpConnection::UtpConnection(const std::string& remoteAddr, uint16_t remotePort,
     synDeadlineUs_ = nowUs + synTimeoutUs;
     synDeadlineValid_ = true;
   }
-  // Queue the initial SYN (carries sendId_, like all our packets).
+  // Queue the initial SYN (carries recvId_; see queueControl).
   queueControl(ST_SYN, nowUs, 0);
 }
 
@@ -123,12 +127,16 @@ UtpConnection::UtpConnection(const std::string& remoteAddr, uint16_t remotePort,
     : remoteAddr_(remoteAddr), remotePort_(remotePort)
 {
   initCommon(remoteAddr, remotePort);
-  // BEP 29：响应方的入站包（对端发起方的所有包）携带 SYN 中的 id
-  // peerRecvId；我方所有出站包使用 peerRecvId + 1。seq = random，
-  // ack = SYN seq。此前 recv/send 颠倒：SYN-ACK 携带 peerRecvId 而
-  // 对端期望 +1，握手同样无法完成。
-  recvId_ = peerRecvId;
-  sendId_ = static_cast<uint16_t>(peerRecvId + 1);
+  // BEP 29 / libtorrent（响应方）：收到的 SYN 携带发起方的 recv_id，
+  // 记为 C。我方回复（SYN-ACK/数据/ACK）必须携带 C（发起方按自己的
+  // recv_id=C 匹配入站包）；发起方后续数据包携带其 send_id = C + 1，
+  // 因此我方按 C + 1 匹配入站包。即：
+  //   sendId_ = C（SYN 中的 id），recvId_ = C + 1。
+  // 此前实现两者颠倒：回复携带 C+1 被发起方（期望 C）丢弃，发起方
+  // 数据包（携带 C+1）也匹配不到注册在 C 的连接，入站 uTP 同样无法
+  // 完成握手。
+  sendId_ = peerRecvId;
+  recvId_ = static_cast<uint16_t>(peerRecvId + 1);
   seq_ = static_cast<uint16_t>(rand32(nowUs));
   ack_ = ackNr;
   peerWnd_ = 0x7FFFFFFFu;
@@ -727,9 +735,11 @@ void UtpConnection::sendAck(uint32_t nowUs)
 void UtpConnection::queueControl(uint8_t type, uint32_t nowUs,
                                  uint16_t seqForAck)
 {
-  // BEP 29：connection_id 对每个端点是常量——我方所有出站包（SYN、
-  // ST_STATE、ST_DATA、ST_FIN）一律携带 sendId_。
-  uint16_t connId = sendId_;
+  // BEP 29 / libtorrent：SYN 特殊——携带 recvId_（发起方期望收到
+  // SYN-ACK 的 id；见 send_syn 注释 "using recv_id here is
+  // intentional"）；其余所有包（响应方的 SYN-ACK、双方的数据/ACK/
+  // FIN/RESET）携带 sendId_。
+  uint16_t connId = (type == ST_SYN) ? recvId_ : sendId_;
   uint16_t seqField = (type == ST_FIN) ? finSeq_ : seq_;
   // Build with optional SACK extension when we have gaps.
   bool haveGaps = !recvReorder_.empty();
@@ -740,7 +750,9 @@ void UtpConnection::queueControl(uint8_t type, uint32_t nowUs,
   h.connectionId = connId;
   h.timestamp = nowUs;
   h.timestampDiff = tsDiffEcho_;
-  h.wndSize = advertsiedWnd();
+  // libtorrent send_syn：SYN 阶段窗口尚未建立，通告 0；其余包通告
+  // 真实接收窗口。
+  h.wndSize = (type == ST_SYN) ? 0 : advertsiedWnd();
   h.seqNr = seqField;
   h.ackNr = seqForAck == 0 ? ack_ : seqForAck;
   if (haveGaps) {

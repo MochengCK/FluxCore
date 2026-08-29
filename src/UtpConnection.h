@@ -127,6 +127,10 @@ public:
   uint16_t getRemotePort() const { return remotePort_; }
   // The connection id to match incoming packets against (our receive id).
   uint16_t getRecvId() const { return recvId_; }
+  // Our outgoing packet id. For a responder this equals the peer's SYN
+  // connection_id, used by UtpContext to route retransmitted SYNs back
+  // to this connection.
+  uint16_t getSendId() const { return sendId_; }
 
 private:
   struct OutPacket {

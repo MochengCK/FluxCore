@@ -121,6 +121,9 @@ public:
 
 private:
   UtpConnection* find(uint16_t recvId);
+  // Route a retransmitted SYN (carrying the responder's send id) back
+  // to the connection that already accepted it.
+  UtpConnection* findBySendId(uint16_t sendId);
   void sendDatagram(const unsigned char* data, size_t len,
                     const std::string& addr, uint16_t port);
 

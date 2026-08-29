@@ -183,11 +183,16 @@ void UtpContext::receiveLoop()
       continue;
     }
 
-    // 按包头 connection_id 查找目标连接（BEP 29：每个端点的所有出站
-    // 包携带固定 id；连接以"我方匹配入站的 id"= recvId_ 注册）。
-    // 发起方注册 C+1 匹配响应方包；响应方注册 C 匹配发起方包（含
-    // 重发的 SYN，直接命中，无需特判）。
+    // 按包头 connection_id 查找目标连接：连接以各自的接收匹配键
+    // （recvId_）注册——发起方注册自己的 recv_id（= SYN.conn_id），
+    // 响应方注册 SYN.conn_id + 1（发起方数据包携带该值）。
     UtpConnection* conn = find(hdr.connectionId);
+    if (!conn && hdr.type == ST_SYN) {
+      // 重发的 SYN 携带 SYN.conn_id = 响应方的 sendId_，不会命中按
+      // recvId_ 的注册；回找已接受该 SYN 的连接，交给它重发 SYN-ACK，
+      // 避免把重传 SYN 误当新连接重复建链。
+      conn = findBySendId(hdr.connectionId);
+    }
     if (conn) {
       conn->handlePacket(buf, static_cast<size_t>(n), nowUs());
       continue;
@@ -218,6 +223,17 @@ UtpConnection* UtpContext::find(uint16_t recvId)
 {
   auto it = connections_.find(recvId);
   return it == connections_.end() ? nullptr : it->second.get();
+}
+
+UtpConnection* UtpContext::findBySendId(uint16_t sendId)
+{
+  // 仅用于 SYN 重传路由，连接数有限时线性扫描足够。
+  for (auto& kv : connections_) {
+    if (kv.second && kv.second->getSendId() == sendId) {
+      return kv.second.get();
+    }
+  }
+  return nullptr;
 }
 
 void UtpContext::removeConnection(UtpConnection* conn)
