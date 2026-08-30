@@ -71,9 +71,7 @@
 #include "UDPTrackerClient.h"
 #include "UtpCommand.h"
 #include "UtpContext.h"
-#include "UtpSocketLike.h"
-#include "PeerConnection.h"
-#include "PeerReceiveHandshakeCommand.h"
+#include "ReceiverMSEHandshakeCommand.h"
 #include "BtProgressInfoFile.h"
 #include "BtAnnounce.h"
 #include "BtRuntime.h"
@@ -242,18 +240,12 @@ void BtSetup::setup(std::vector<std::unique_ptr<Command>>& commands,
         }
         e->addRoutineCommand(
             make_unique<utp::UtpCommand>(e->newCUID(), e));
-        // Inbound uTP peers: on SYN, spawn the standard handshake
-        // routing command over a uTP transport. The command resolves
-        // the peer's info hash to the matching RequestGroup itself.
+        // Inbound uTP peers: on SYN, spawn the MSE sniffing/handshake
+        // command over the uTP transport — identical to the TCP path
+        // (it identifies plaintext vs encrypted handshake, negotiates
+        // MSE when the peer offers it, and enforces forced-encryption).
         e->getUtpContext()->setAcceptHandler(
             [e](const std::shared_ptr<utp::UtpConnection>& conn) {
-              // MSE 加密不在 uTP 上传输（本实现中 uTP 仅承载明文
-              // Legacy 握手）。只有当"强制加密"（bt-require-crypto 或
-              // bt-force-encryption 为真）时才拒绝入站 uTP，让对端
-              // 回退 TCP。此前额外要求 bt-min-crypto-level=plain，导致
-              // 默认"自适应加密"（arc4）配置下入站 uTP 也被拒绝、全部
-              // 回退 TCP，节点表格显示不了 uTP。与出站 uTP 的
-              // plainAllowed 门控保持一致。
               const auto* opt = e->getOption();
               // 热更新：enable-utp 被关闭时拒绝新入站 uTP 连接（出站
               // 侧 PeerInitiateConnectionCommand 同样实时读取该选项）。
@@ -263,23 +255,13 @@ void BtSetup::setup(std::vector<std::unique_ptr<Command>>& commands,
                     "option change; peer may retry over TCP)");
                 return;
               }
-              const bool plainAllowed =
-                  !opt->getAsBool(PREF_BT_REQUIRE_CRYPTO) &&
-                  !opt->getAsBool(PREF_BT_FORCE_ENCRYPTION);
-              if (!plainAllowed) {
-                A2_LOG_INFO(
-                    "uTP: inbound connection rejected (forced encryption "
-                    "disallows plaintext; peer may retry over TCP)");
-                return;
-              }
+              // 加密策略与 TCP 一致：明文/加密都接受，由嗅探分流；
+              // 强制加密下收到明文握手会在命令内部按配置拒绝。
               auto peer = std::make_shared<Peer>(conn->getRemoteAddr(),
                                                  conn->getRemotePort(),
                                                  true /* incoming */);
-              auto peerConnection = make_unique<PeerConnection>(
-                  e->newCUID(), peer, make_unique<UtpSocketLike>(conn));
-              e->addCommand(make_unique<PeerReceiveHandshakeCommand>(
-                  e->newCUID(), peer, e, nullptr /* no TCP socket */,
-                  std::move(peerConnection)));
+              e->addCommand(make_unique<ReceiverMSEHandshakeCommand>(
+                  e->newCUID(), peer, e, nullptr /* no TCP socket */, conn));
             });
         A2_LOG_INFO("uTP: transport driver installed");
       }

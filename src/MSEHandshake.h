@@ -47,7 +47,7 @@
 namespace aria2 {
 
 class Option;
-class SocketCore;
+class SocketLike;
 class DHKeyExchange;
 class ARC4Encryptor;
 class DownloadContext;
@@ -78,7 +78,8 @@ private:
   static constexpr size_t MAX_BUFFER_LENGTH = 636U;
 
   cuid_t cuid_;
-  std::shared_ptr<SocketCore> socket_;
+  // 传输无关字节流：TCP (TcpSocketLike) 或 uTP (UtpSocketLike)。
+  std::shared_ptr<SocketLike> transport_;
   bool wantRead_;
   const Option* option_;
 
@@ -123,7 +124,7 @@ private:
   void shiftBuffer(size_t offset);
 
 public:
-  MSEHandshake(cuid_t cuid, const std::shared_ptr<SocketCore>& socket,
+  MSEHandshake(cuid_t cuid, std::shared_ptr<SocketLike> transport,
                const Option* op);
 
   ~MSEHandshake();

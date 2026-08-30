@@ -34,6 +34,8 @@
 /* copyright --> */
 #include "ReceiverMSEHandshakeCommand.h"
 #include "SocketLike.h"
+#include "UtpSocketLike.h"
+#include "UtpConnection.h"
 #include "PeerReceiveHandshakeCommand.h"
 #include "PeerConnection.h"
 #include "DownloadEngine.h"
@@ -56,12 +58,18 @@ namespace aria2 {
 
 ReceiverMSEHandshakeCommand::ReceiverMSEHandshakeCommand(
     cuid_t cuid, const std::shared_ptr<Peer>& peer, DownloadEngine* e,
-    const std::shared_ptr<SocketCore>& s)
-    :
-
-      PeerAbstractCommand(cuid, peer, e, s),
+    const std::shared_ptr<SocketCore>& s,
+    const std::shared_ptr<utp::UtpConnection>& utpConn)
+    : PeerAbstractCommand(cuid, peer, e, s),
       sequence_(RECEIVER_IDENTIFY_HANDSHAKE),
-      mseHandshake_(make_unique<MSEHandshake>(cuid, s, e->getOption()))
+      isUtp_(utpConn != nullptr),
+      utpConn_(utpConn),
+      transport_(isUtp_
+                     ? std::static_pointer_cast<SocketLike>(
+                           std::make_shared<UtpSocketLike>(utpConn))
+                     : std::make_shared<TcpSocketLike>(s)),
+      mseHandshake_(
+          make_unique<MSEHandshake>(cuid, transport_, e->getOption()))
 {
   setTimeout(std::chrono::seconds(
       e->getOption()->getAsInt(PREF_PEER_CONNECTION_TIMEOUT)));
@@ -78,6 +86,10 @@ bool ReceiverMSEHandshakeCommand::exitBeforeExecute()
 
 bool ReceiverMSEHandshakeCommand::executeInternal()
 {
+  // uTP：连接失败/超时/被 RST 时 transport 不可用，快速失败。
+  if (isUtp_ && !transport_->isOpen()) {
+    throw DL_ABORT_EX("uTP connection closed during MSE handshake");
+  }
   if (mseHandshake_->getWantRead()) {
     mseHandshake_->read();
   }
@@ -103,13 +115,19 @@ bool ReceiverMSEHandshakeCommand::executeInternal()
               "The legacy BitTorrent handshake is not acceptable by the"
               " preference.");
         }
-        auto peerConnection =
-            make_unique<PeerConnection>(getCuid(), getPeer(), make_unique<TcpSocketLike>(getSocket()));
+        std::unique_ptr<SocketLike> peerTransport =
+            isUtp_
+                ? std::unique_ptr<SocketLike>(
+                      make_unique<UtpSocketLike>(utpConn_))
+                : make_unique<TcpSocketLike>(getSocket());
+        auto peerConnection = make_unique<PeerConnection>(
+            getCuid(), getPeer(), std::move(peerTransport));
         peerConnection->presetBuffer(mseHandshake_->getBuffer(),
                                      mseHandshake_->getBufferLength());
         getDownloadEngine()->addCommand(
             make_unique<PeerReceiveHandshakeCommand>(
-                getCuid(), getPeer(), getDownloadEngine(), getSocket(),
+                getCuid(), getPeer(), getDownloadEngine(),
+                isUtp_ ? std::shared_ptr<SocketCore>() : getSocket(),
                 std::move(peerConnection)));
         return true;
       }
@@ -196,17 +214,20 @@ bool ReceiverMSEHandshakeCommand::executeInternal()
       break;
     }
   }
-  if (mseHandshake_->getWantRead()) {
-    setReadCheckSocket(getSocket());
-  }
-  else {
-    disableReadCheckSocket();
-  }
-  if (mseHandshake_->getWantWrite()) {
-    setWriteCheckSocket(getSocket());
-  }
-  else {
-    disableWriteCheckSocket();
+  // uTP：不注册 fd 事件，靠每轮调度轮询推进（数据由 UtpCommand 泵送）。
+  if (!isUtp_) {
+    if (mseHandshake_->getWantRead()) {
+      setReadCheckSocket(getSocket());
+    }
+    else {
+      disableReadCheckSocket();
+    }
+    if (mseHandshake_->getWantWrite()) {
+      setWriteCheckSocket(getSocket());
+    }
+    else {
+      disableWriteCheckSocket();
+    }
   }
   addCommandSelf();
   return false;
@@ -214,8 +235,11 @@ bool ReceiverMSEHandshakeCommand::executeInternal()
 
 void ReceiverMSEHandshakeCommand::createCommand()
 {
-  auto peerConnection =
-      make_unique<PeerConnection>(getCuid(), getPeer(), make_unique<TcpSocketLike>(getSocket()));
+  std::unique_ptr<SocketLike> peerTransport =
+      isUtp_ ? std::unique_ptr<SocketLike>(make_unique<UtpSocketLike>(utpConn_))
+             : make_unique<TcpSocketLike>(getSocket());
+  auto peerConnection = make_unique<PeerConnection>(
+      getCuid(), getPeer(), std::move(peerTransport));
   if (mseHandshake_->getNegotiatedCryptoType() == MSEHandshake::CRYPTO_ARC4) {
     peerConnection->enableEncryption(mseHandshake_->popEncryptor(),
                                      mseHandshake_->popDecryptor());
@@ -228,7 +252,8 @@ void ReceiverMSEHandshakeCommand::createCommand()
   // as a hint. If this info hash and one in BitTorrent Handshake does not
   // match, then drop connection.
   getDownloadEngine()->addCommand(make_unique<PeerReceiveHandshakeCommand>(
-      getCuid(), getPeer(), getDownloadEngine(), getSocket(),
+      getCuid(), getPeer(), getDownloadEngine(),
+      isUtp_ ? std::shared_ptr<SocketCore>() : getSocket(),
       std::move(peerConnection)));
 }
 

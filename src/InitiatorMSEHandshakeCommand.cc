@@ -34,6 +34,8 @@
 /* copyright --> */
 #include "InitiatorMSEHandshakeCommand.h"
 #include "SocketLike.h"
+#include "UtpSocketLike.h"
+#include "UtpConnection.h"
 #include "PeerInitiateConnectionCommand.h"
 #include "PeerInteractionCommand.h"
 #include "DownloadEngine.h"
@@ -64,15 +66,27 @@ namespace aria2 {
 InitiatorMSEHandshakeCommand::InitiatorMSEHandshakeCommand(
     cuid_t cuid, RequestGroup* requestGroup, const std::shared_ptr<Peer>& p,
     DownloadEngine* e, const std::shared_ptr<BtRuntime>& btRuntime,
-    const std::shared_ptr<SocketCore>& s)
+    const std::shared_ptr<SocketCore>& s,
+    const std::shared_ptr<utp::UtpConnection>& utpConn)
     : PeerAbstractCommand(cuid, p, e, s),
       requestGroup_(requestGroup),
       btRuntime_(btRuntime),
       sequence_(INITIATOR_SEND_KEY),
-      mseHandshake_(make_unique<MSEHandshake>(cuid, s, getOption().get()))
+      isUtp_(utpConn != nullptr),
+      utpConn_(utpConn),
+      transport_(isUtp_
+                     ? std::static_pointer_cast<SocketLike>(
+                           std::make_shared<UtpSocketLike>(utpConn))
+                     : std::make_shared<TcpSocketLike>(s)),
+      mseHandshake_(
+          make_unique<MSEHandshake>(cuid, transport_, getOption().get()))
 {
-  disableReadCheckSocket();
-  setWriteCheckSocket(getSocket());
+  // uTP 无 fd 事件可注册：由引擎每轮调度轮询本命令（与
+  // PeerInteractionCommand 的 uTP 路径一致）；TCP 维持原事件驱动。
+  if (!isUtp_) {
+    disableReadCheckSocket();
+    setWriteCheckSocket(getSocket());
+  }
   setTimeout(std::chrono::seconds(
       getOption()->getAsInt(PREF_PEER_CONNECTION_TIMEOUT)));
 
@@ -88,6 +102,11 @@ InitiatorMSEHandshakeCommand::~InitiatorMSEHandshakeCommand()
 
 bool InitiatorMSEHandshakeCommand::executeInternal()
 {
+  // uTP：连接失败/超时/被 RST 时 transport 不可用，快速失败走回退
+  // （prepareForNextPeer 重建 PeerInitiateConnectionCommand 回 TCP）。
+  if (isUtp_ && !transport_->isOpen()) {
+    throw DL_ABORT_EX("uTP connection closed during MSE handshake");
+  }
   if (mseHandshake_->getWantRead()) {
     mseHandshake_->read();
   }
@@ -102,7 +121,9 @@ bool InitiatorMSEHandshakeCommand::executeInternal()
         auto btTimeout = getOption()->getAsInt(PREF_BT_TIMEOUT);
         setTimeout(std::chrono::seconds(btTimeout < 30 ? btTimeout : 30));
       }
-      if (!getSocket()->isWritable(0)) {
+      // uTP 没有可写性事件：写入先缓存进 UtpConnection::pendingSend_，
+      // 连接建立后由 processTick 冲刷，无需等待。
+      if (!isUtp_ && !getSocket()->isWritable(0)) {
         addCommandSelf();
         return false;
       }
@@ -161,8 +182,13 @@ bool InitiatorMSEHandshakeCommand::executeInternal()
     }
     case INITIATOR_RECEIVE_PAD_D: {
       if (mseHandshake_->receivePad()) {
-        auto peerConnection =
-            make_unique<PeerConnection>(getCuid(), getPeer(), make_unique<TcpSocketLike>(getSocket()));
+        std::unique_ptr<SocketLike> peerTransport =
+            isUtp_
+                ? std::unique_ptr<SocketLike>(
+                      make_unique<UtpSocketLike>(utpConn_))
+                : make_unique<TcpSocketLike>(getSocket());
+        auto peerConnection = make_unique<PeerConnection>(
+            getCuid(), getPeer(), std::move(peerTransport));
         if (mseHandshake_->getNegotiatedCryptoType() ==
             MSEHandshake::CRYPTO_ARC4) {
           size_t buflen = mseHandshake_->getBufferLength();
@@ -178,7 +204,8 @@ bool InitiatorMSEHandshakeCommand::executeInternal()
         }
         getDownloadEngine()->addCommand(make_unique<PeerInteractionCommand>(
             getCuid(), requestGroup_, getPeer(), getDownloadEngine(),
-            btRuntime_, pieceStorage_, peerStorage_, getSocket(),
+            btRuntime_, pieceStorage_, peerStorage_,
+            isUtp_ ? std::shared_ptr<SocketCore>() : getSocket(),
             PeerInteractionCommand::INITIATOR_SEND_HANDSHAKE,
             std::move(peerConnection)));
         return true;
@@ -190,17 +217,20 @@ bool InitiatorMSEHandshakeCommand::executeInternal()
     }
     }
   }
-  if (mseHandshake_->getWantRead()) {
-    setReadCheckSocket(getSocket());
-  }
-  else {
-    disableReadCheckSocket();
-  }
-  if (mseHandshake_->getWantWrite()) {
-    setWriteCheckSocket(getSocket());
-  }
-  else {
-    disableWriteCheckSocket();
+  // uTP：不注册 fd 事件，靠每轮调度轮询推进（数据由 UtpCommand 泵送）。
+  if (!isUtp_) {
+    if (mseHandshake_->getWantRead()) {
+      setReadCheckSocket(getSocket());
+    }
+    else {
+      disableReadCheckSocket();
+    }
+    if (mseHandshake_->getWantWrite()) {
+      setWriteCheckSocket(getSocket());
+    }
+    else {
+      disableWriteCheckSocket();
+    }
   }
   addCommandSelf();
   return false;

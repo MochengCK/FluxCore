@@ -43,7 +43,6 @@
 #include "LogFactory.h"
 #include "Logger.h"
 #include "BtHandshakeMessage.h"
-#include "SocketCore.h"
 #include "SocketLike.h"
 #include "a2netcompat.h"
 #include "DHKeyExchange.h"
@@ -75,15 +74,14 @@ const unsigned char* GENERATOR = reinterpret_cast<const unsigned char*>("2");
 
 } // namespace
 
-MSEHandshake::MSEHandshake(cuid_t cuid,
-                           const std::shared_ptr<SocketCore>& socket,
+MSEHandshake::MSEHandshake(cuid_t cuid, std::shared_ptr<SocketLike> transport,
                            const Option* op)
     : cuid_(cuid),
-      socket_(socket),
+      transport_(std::move(transport)),
       wantRead_(false),
       option_(op),
       rbufLength_(0),
-      socketBuffer_(std::make_shared<TcpSocketLike>(socket)),
+      socketBuffer_(transport_),
       negotiatedCryptoType_(CRYPTO_NONE),
       initiator_(true),
       markerIndex_(0),
@@ -142,8 +140,8 @@ void MSEHandshake::read()
     return;
   }
   size_t len = MAX_BUFFER_LENGTH - rbufLength_;
-  socket_->readData(rbuf_ + rbufLength_, len);
-  if (len == 0 && !socket_->wantRead() && !socket_->wantWrite()) {
+  transport_->readData(rbuf_ + rbufLength_, len);
+  if (len == 0 && !transport_->wantRead() && !transport_->wantWrite()) {
     // TODO Should we set graceful in peer?
     throw DL_ABORT_EX(EX_EOF_FROM_PEER);
   }

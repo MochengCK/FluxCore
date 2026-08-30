@@ -45,6 +45,11 @@ class PieceStorage;
 class BtRuntime;
 class MSEHandshake;
 class Option;
+class SocketLike;
+
+namespace utp {
+class UtpConnection;
+} // namespace utp
 
 class InitiatorMSEHandshakeCommand : public PeerAbstractCommand {
 public:
@@ -68,6 +73,13 @@ private:
   std::shared_ptr<BtRuntime> btRuntime_;
 
   Seq sequence_;
+
+  // uTP 传输（isUtp_）：无 fd 事件，命令靠每轮调度轮询；连接失败由
+  // transport_->isOpen() 守卫。TCP 时 isUtp_==false，行为与原实现一致。
+  bool isUtp_;
+  std::shared_ptr<utp::UtpConnection> utpConn_;
+  std::shared_ptr<SocketLike> transport_;
+
   std::unique_ptr<MSEHandshake> mseHandshake_;
 
   const std::shared_ptr<Option>& getOption() const;
@@ -82,11 +94,13 @@ protected:
   virtual bool exitBeforeExecute() CXX11_OVERRIDE;
 
 public:
-  InitiatorMSEHandshakeCommand(cuid_t cuid, RequestGroup* requestGroup,
-                               const std::shared_ptr<Peer>& peer,
-                               DownloadEngine* e,
-                               const std::shared_ptr<BtRuntime>& btRuntime,
-                               const std::shared_ptr<SocketCore>& s);
+  // utpConn 非空表示在 uTP 传输上做 MSE（此时 s 传 nullptr）。
+  InitiatorMSEHandshakeCommand(
+      cuid_t cuid, RequestGroup* requestGroup,
+      const std::shared_ptr<Peer>& peer, DownloadEngine* e,
+      const std::shared_ptr<BtRuntime>& btRuntime,
+      const std::shared_ptr<SocketCore>& s,
+      const std::shared_ptr<utp::UtpConnection>& utpConn = nullptr);
 
   virtual ~InitiatorMSEHandshakeCommand();
 

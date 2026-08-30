@@ -8,6 +8,7 @@
 #include "util.h"
 #include "prefs.h"
 #include "SocketCore.h"
+#include "SocketLike.h"
 #include "Option.h"
 #include "DownloadContext.h"
 #include "FileEntry.h"
@@ -133,7 +134,8 @@ std::shared_ptr<MSEHandshake>
 createMSEHandshake(std::shared_ptr<SocketCore> socket, bool initiator,
                    const Option* option)
 {
-  std::shared_ptr<MSEHandshake> h(new MSEHandshake(1, socket, option));
+  std::shared_ptr<MSEHandshake> h(
+      new MSEHandshake(1, std::make_shared<TcpSocketLike>(socket), option));
   h->initEncryptionFacility(initiator);
   return h;
 }
