@@ -153,7 +153,6 @@ private:
   void retransmitPacket(OutPacket& p, uint32_t nowUs);
   void sendAck(uint32_t nowUs);
   bool canSendData() const;
-  uint16_t nextSeq() const { return static_cast<uint16_t>(seq_ + 1); }
 
   void onAck(uint16_t ackNr, uint32_t sackBits, uint32_t nowUs);
   void onData(const PacketHeader& hdr, const unsigned char* payload,
@@ -176,8 +175,13 @@ private:
   bool error_ = false;
 
   // --- sequence ---
-  uint16_t seq_ = 0; // last seq sent
-  uint16_t ack_ = 0; // last contiguous seq received
+  // libtorrent m_seq_nr 语义：下一个将发送的数据包序号。SYN/DATA 消耗
+  // 序号（发送后 ++）；ST_STATE（含 SYN-ACK）与 FIN 携带它但不消耗——
+  // 因此响应方首个 DATA 复用 SYN-ACK 的序号，发起方收到 SYN-ACK 后
+  // 按 ack_ = SYN-ACK.seq - 1 记账（见 handlePacket）。
+  uint16_t seq_ = 0;  // next packet seq
+  uint16_t synSeq_ = 0; // 出站 SYN 的序号（重传必须原样复发）
+  uint16_t ack_ = 0;  // last contiguous seq received
   bool synAcked_ = false;
 
   // --- send side ---

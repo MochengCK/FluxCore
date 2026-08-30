@@ -108,7 +108,8 @@ UtpConnection::UtpConnection(const std::string& remoteAddr, uint16_t remotePort,
   // 都无法完成握手，表现为"uTP 连接无客户端、无速度"后全部回退 TCP。
   sendId_ = static_cast<uint16_t>(rand32(nowUs));
   recvId_ = static_cast<uint16_t>(sendId_ - 1);
-  seq_ = 1;
+  seq_ = 1; // libtorrent: SYN 从随机/初始序号开始并消耗它
+  synSeq_ = seq_;
   peerWnd_ = 0x7FFFFFFFu;
   state_ = State::SYN_SENT;
   lastRecvUs_ = 0;
@@ -117,8 +118,10 @@ UtpConnection::UtpConnection(const std::string& remoteAddr, uint16_t remotePort,
     synDeadlineUs_ = nowUs + synTimeoutUs;
     synDeadlineValid_ = true;
   }
-  // Queue the initial SYN (carries recvId_; see queueControl).
+  // Queue the initial SYN (carries recvId_; see queueControl). SYN 消耗
+  // 一个序号：首个 DATA 的序号为 synSeq_ + 1。
   queueControl(ST_SYN, nowUs, 0);
+  seq_ = static_cast<uint16_t>(seq_ + 1);
 }
 
 UtpConnection::UtpConnection(const std::string& remoteAddr, uint16_t remotePort,
@@ -143,7 +146,10 @@ UtpConnection::UtpConnection(const std::string& remoteAddr, uint16_t remotePort,
   state_ = State::SYN_RECV;
   lastRecvUs_ = nowUs;
   lastSendUs_ = nowUs;
-  // Reply with a pure ACK (ST_STATE), per spec.
+  // Reply with a pure ACK (ST_STATE), per spec. libtorrent 语义：
+  // SYN-ACK 携带"下一个待用序号"但不消耗它——首个 DATA 复用同一序号。
+  // 发起方（libtorrent）按 ack_ = SYN-ACK.seq - 1 记账，期望我方首个
+  // DATA 的序号恰为 SYN-ACK.seq。
   queueControl(ST_STATE, nowUs, ack_);
 }
 
@@ -269,7 +275,12 @@ void UtpConnection::handlePacket(const unsigned char* data, size_t len,
     }
     if (state_ == State::SYN_SENT) {
       // Our SYN was accepted: mark connected, adopt peer seq.
-      ack_ = hdr.seqNr;
+      // libtorrent：SYN-ACK（ST_STATE）携带的是对端"下一个待用序号"，
+      // 未被消耗——累计确认必须记 seqNr - 1（对端尚未发出任何已消耗
+      // 序号的包）。若记 seqNr，我方首个 DATA 的 ack_nr 比对端已发的
+      // 多 1，libtorrent 的入站校验（ack_nr > 已发最大序号）会把包静默
+      // 丢弃——BT 握手发不出去，正是"uTP 连接无速度后回退 TCP"的根因。
+      ack_ = static_cast<uint16_t>(hdr.seqNr - 1);
       synAcked_ = true;
       state_ = State::CONNECTED;
     }
@@ -479,8 +490,9 @@ void UtpConnection::processTick(uint32_t nowUs)
   if (finPending_) {
     finPending_ = false;
     finSent_ = true;
-    finSeq_ = nextSeq();
-    seq_ = finSeq_;
+    // libtorrent：FIN 携带下一个待用序号但不消耗它（之后不再发数据，
+    // 重传复发同一序号；对端按累计确认覆盖该序号即视为已确认）。
+    finSeq_ = seq_;
     if (state_ == State::SYN_SENT) {
       state_ = State::CLOSED;
     }
@@ -528,8 +540,10 @@ void UtpConnection::processTick(uint32_t nowUs)
       size_t chunk = std::min<size_t>(pendingSend_.size(), packetSize_);
       OutPacket op;
       op.payload.assign(pendingSend_.begin(), pendingSend_.begin() + chunk);
-      op.seq = nextSeq();
-      seq_ = op.seq;
+      // seq_ 即"下一个待用序号"：响应方首个 DATA 复用 SYN-ACK 的序号，
+      // 与 libtorrent 发起方的期望（ack_+1）一致。发送后消耗。
+      op.seq = seq_;
+      seq_ = static_cast<uint16_t>(seq_ + 1);
       op.sendTimeUs = nowUs;
       op.size = static_cast<uint32_t>(chunk);
       pendingSend_.erase(pendingSend_.begin(), pendingSend_.begin() + chunk);
@@ -740,7 +754,10 @@ void UtpConnection::queueControl(uint8_t type, uint32_t nowUs,
   // intentional"）；其余所有包（响应方的 SYN-ACK、双方的数据/ACK/
   // FIN/RESET）携带 sendId_。
   uint16_t connId = (type == ST_SYN) ? recvId_ : sendId_;
-  uint16_t seqField = (type == ST_FIN) ? finSeq_ : seq_;
+  // SYN 重传必须复发原始序号（seq_ 已在首发后前移）；FIN 用冻结的
+  // finSeq_；ST_STATE（含 SYN-ACK）携带"下一个待用序号"且不消耗。
+  uint16_t seqField =
+      (type == ST_SYN) ? synSeq_ : (type == ST_FIN) ? finSeq_ : seq_;
   // Build with optional SACK extension when we have gaps.
   bool haveGaps = !recvReorder_.empty();
   size_t total = HEADER_LEN + (haveGaps ? 6 : 0);
