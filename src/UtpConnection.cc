@@ -160,7 +160,11 @@ UtpConnection::UtpConnection(const std::string& remoteAddr, uint16_t remotePort,
 void UtpConnection::initCommon(const std::string& remoteAddr,
                                uint16_t remotePort)
 {
-  maxWindow_ = DEFAULT_PACKET_SIZE * 2;
+  // 初始拥塞窗口 10 包（对齐 TCP 初始窗口惯例 / RFC 6928）：新连接
+  // 冷启动阶段要尽快完成握手+首批数据交换；2 包起步需多轮 RTT 慢启动
+  // 才有吞吐，任务冷启动明显偏慢。LEDBAT 会在延迟上升时自动收敛，
+  // 丢包路径（超时/快速重传）仍会减半兜底。
+  maxWindow_ = DEFAULT_PACKET_SIZE * 10;
   packetSize_ = DEFAULT_PACKET_SIZE;
   rtt_ = 0;
   rttVar_ = 0;

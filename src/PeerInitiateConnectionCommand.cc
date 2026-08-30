@@ -106,23 +106,24 @@ bool PeerInitiateConnectionCommand::executeInternal()
   // 为真的 peer 发起，而 tracker/DHT 来源的 peer 不广播该标记，导致出站
   // 几乎从不发起 uTP、节点表清一色 TCP。
   //  - 已知支持（PEX 标记）的 peer：默认完整 SYN 重试预算；
-  //  - 能力未知的 peer：3 秒短预算快速探测，超时立即回退，避免对不支持
-  //    uTP 的对端长时间挂起。
+  //  - 能力未知的 peer：1.5 秒短预算快速探测，超时立即回退，避免对不支持
+  //    uTP 的对端长时间挂起（也减少任务冷启动的建连延迟）。
   // 入站 uTP 不受影响：任何对端都可主动连我们的 UDP 端口。
   // IPv6 peer 不发起：共享 UDP socket 绑定的是 AF_INET。
   const bool peerIsV6 =
       getPeer()->getIPAddress().find(':') != std::string::npos;
   // uTP 探测门控（对齐 libtorrent utp_failures）：首次尝试恒允许；
   // 失败过但未达上限，需距上次失败超过冷却间隔才再探测；连续失败
-  // 达到上限后该 peer 固定走 TCP，不再浪费 3 秒探测预算。
+  // 达到上限后该 peer 固定走 TCP，不再浪费探测预算。
   if (utpCtx && opt->getAsBool(PREF_ENABLE_UTP) && !peerIsV6 &&
       getPeer()->utpProbeAllowed()) {
     const bool utpCapable = getPeer()->isUtpCapable();
-    // 0 = 完整重试预算，仅用于"已知能力且首次尝试"；其余情况（能力
-    // 未知、或失败/成功过的再探测）用 3 秒短预算快速失败，控制回退延迟。
     const bool firstAttempt = !getPeer()->hasUtpTried();
+    // 0 = 完整重试预算，仅用于"已知能力且首次尝试"；其余情况（能力
+    // 未知、或失败/成功过的再探测）用 1.5 秒短预算（首发 + 1s 处一次
+    // 重传）快速失败，控制冷启动阶段的回退延迟。
     const uint32_t synBudget =
-        (utpCapable && firstAttempt) ? 0u : 3u * 1000 * 1000;
+        (utpCapable && firstAttempt) ? 0u : 1500u * 1000;
     auto conn = utpCtx->connect(getPeer()->getIPAddress(),
                                 getPeer()->getPort(), synBudget);
     if (conn) {
