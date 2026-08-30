@@ -103,7 +103,10 @@ private:
   // 对该 peer 的 uTP 探测，固定走 TCP；未达上限时按冷却间隔再探测。
   // uTP 会话成功进入 WIRED 时清零（见 PeerInteractionCommand）。
   static constexpr size_t MAX_UTP_FAILURES = 3;
-  static constexpr auto UTP_PROBE_COOLDOWN = std::chrono::minutes(5);
+  // 冷却时长（秒）。用整型常量：chrono 类型的 static constexpr 成员在
+  // 比较运算符中会被取地址（ODR-use），GCC/MinGW 下要求类外定义导致
+  // 链接失败；比较处现构造 duration 规避。
+  static constexpr int64_t UTP_PROBE_COOLDOWN_SECONDS = 300;
   size_t utpFailCount_ = 0;
   Timer lastUtpFailTime_ = Timer::zero();
 
@@ -182,7 +185,8 @@ public:
     if (utpFailCount_ >= MAX_UTP_FAILURES) {
       return false;
     }
-    return lastUtpFailTime_.difference() >= UTP_PROBE_COOLDOWN;
+    return lastUtpFailTime_.difference() >=
+           std::chrono::seconds(UTP_PROBE_COOLDOWN_SECONDS);
   }
 
   // 对端 uTP 能力（BEP 11 PEX added.f 0x01 位 / 实际建立过 uTP 连接）。
