@@ -113,9 +113,18 @@ void UTMetadataPostDownloadHandler::getNextRequestGroups(
     }
     auto rgman = requestGroup->getRequestGroupMan();
 
-    // 磁力链接元数据下载完成后，强制暂停新创建的 BT 任务，
-    // 让用户选择要下载的文件（仅对多文件种子有意义，单文件由前端自动恢复）
-    if (rgman && rgman->getKeepRunning()) {
+    // 磁力链接元数据下载完成后，仅当新任务是"多文件种子"时暂停，
+    // 让用户选择要下载的文件。单文件种子没有可选内容，由引擎直接继续
+    // 下载——原实现无条件暂停后依赖前端轮询恢复，元数据解析得快时
+    // 轮询窗口来不及观察磁力形态，暂停的任务无人恢复，表现为
+    // "下载中莫名自动暂停"。
+    bool needPauseForSelection = false;
+    if (!newRgs.empty()) {
+      const auto& newDctx = newRgs[0]->getDownloadContext();
+      needPauseForSelection =
+          newDctx && newDctx->getFileEntries().size() > 1;
+    }
+    if (rgman && rgman->getKeepRunning() && needPauseForSelection) {
       for (auto& rg : newRgs) {
         rg->setPauseRequested(true);
       }
