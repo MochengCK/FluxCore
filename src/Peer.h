@@ -94,11 +94,18 @@ private:
   bool utp_;
 
   // 出站连接是否已经尝试过 uTP。uTP 是无连接 UDP 传输，connect() 总能
-  // "成功"返回（尚未完成 SYN/SYN-ACK 握手），因此 uTP 一旦失败（对端
-  // 不支持 / NAT 丢弃 UDP / 握手超时），peer 被 returnPeer 后重新
-  // checkout 会再次走 uTP、再次失败，形成"死连接"死循环。用此标记让
-  // 每个 peer 只尝试一次 uTP，失败后回退 TCP。
+  // "成功"返回（尚未完成 SYN/SYN-ACK 握手），因此需要记录尝试状态，
+  // 配合失败计数（utpFailCount_）决定后续探测策略。
   bool utpTried_ = false;
+
+  // uTP 连接级失败记账（对齐 libtorrent 的 utp_failures）：uTP 探测
+  // 连续失败（对端不支持 / NAT 丢弃 UDP / 路由不通）达到上限后停止
+  // 对该 peer 的 uTP 探测，固定走 TCP；未达上限时按冷却间隔再探测。
+  // uTP 会话成功进入 WIRED 时清零（见 PeerInteractionCommand）。
+  static constexpr size_t MAX_UTP_FAILURES = 3;
+  static constexpr auto UTP_PROBE_COOLDOWN = std::chrono::minutes(5);
+  size_t utpFailCount_ = 0;
+  Timer lastUtpFailTime_ = Timer::zero();
 
   // 断开时保留的本会话真实统计（releaseSessionResource 时捕获），
   // 供 RPC getPeers 的 disconnected 分组展示真实数据，避免前端显示
@@ -156,6 +163,27 @@ public:
   // 出站 uTP 尝试标记（见 utpTried_ 注释）。仅出站连接决策使用。
   void setUtpTried(bool b) { utpTried_ = b; }
   bool hasUtpTried() const { return utpTried_; }
+
+  // uTP 连接级失败记账（见 utpFailCount_ 注释）。
+  void recordUtpFailure()
+  {
+    ++utpFailCount_;
+    lastUtpFailTime_.reset();
+  }
+  void resetUtpFailures() { utpFailCount_ = 0; }
+  size_t getUtpFailCount() const { return utpFailCount_; }
+  // 是否允许（再次）发起出站 uTP 探测：未失败过恒允许；失败过但未达
+  // 上限，需距上次失败超过冷却间隔；达到上限后不再探测。
+  bool utpProbeAllowed() const
+  {
+    if (utpFailCount_ == 0) {
+      return true;
+    }
+    if (utpFailCount_ >= MAX_UTP_FAILURES) {
+      return false;
+    }
+    return lastUtpFailTime_.difference() >= UTP_PROBE_COOLDOWN;
+  }
 
   // 对端 uTP 能力（BEP 11 PEX added.f 0x01 位 / 实际建立过 uTP 连接）。
   void setUtpCapable(bool b) { utpCapable_ = b; }

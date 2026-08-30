@@ -112,11 +112,17 @@ bool PeerInitiateConnectionCommand::executeInternal()
   // IPv6 peer 不发起：共享 UDP socket 绑定的是 AF_INET。
   const bool peerIsV6 =
       getPeer()->getIPAddress().find(':') != std::string::npos;
+  // uTP 探测门控（对齐 libtorrent utp_failures）：首次尝试恒允许；
+  // 失败过但未达上限，需距上次失败超过冷却间隔才再探测；连续失败
+  // 达到上限后该 peer 固定走 TCP，不再浪费 3 秒探测预算。
   if (utpCtx && opt->getAsBool(PREF_ENABLE_UTP) && !peerIsV6 &&
-      !getPeer()->hasUtpTried()) {
+      getPeer()->utpProbeAllowed()) {
     const bool utpCapable = getPeer()->isUtpCapable();
-    // 0 = 完整重试预算；未知能力的 peer 用 3 秒短预算快速探测
-    const uint32_t synBudget = utpCapable ? 0u : 3u * 1000 * 1000;
+    // 0 = 完整重试预算，仅用于"已知能力且首次尝试"；其余情况（能力
+    // 未知、或失败/成功过的再探测）用 3 秒短预算快速失败，控制回退延迟。
+    const bool firstAttempt = !getPeer()->hasUtpTried();
+    const uint32_t synBudget =
+        (utpCapable && firstAttempt) ? 0u : 3u * 1000 * 1000;
     auto conn = utpCtx->connect(getPeer()->getIPAddress(),
                                 getPeer()->getPort(), synBudget);
     if (conn) {
@@ -132,7 +138,7 @@ bool PeerInitiateConnectionCommand::executeInternal()
       if (mseHandshakeEnabled_) {
         // uTP 上走 MSE：握手数据先缓存于 uTP 连接，建链后自动发出。
         // 失败回退由 InitiatorMSEHandshakeCommand::prepareForNextPeer
-        // 处理（hasUtpTried 已置位，重试走 TCP）。
+        // 处理：失败已记账（冷却内不再探测），重试直接走 TCP。
         auto c = make_unique<InitiatorMSEHandshakeCommand>(
             getCuid(), requestGroup_, getPeer(), getDownloadEngine(),
             btRuntime_, nullptr /* no TCP socket */, conn);

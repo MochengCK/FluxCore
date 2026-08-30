@@ -88,6 +88,15 @@ bool UtpContext::start(uint16_t port)
       }
     }
     socket_->setNonBlockingMode();
+    // 提升内核接收缓冲：默认值（几十 KB 量级）在多 MB/s 速率下，
+    // 引擎任一迭代间隙（磁盘写、命令调度）都会溢出丢包——UDP 丢了
+    // 就是丢了，发送方按丢包收缩拥塞窗口，吞吐反复塌方。尽力设置，
+    // 内核按系统上限自动截断，失败无副作用。
+    {
+      int rcvBuf = 4 * 1024 * 1024;
+      (void)setsockopt(socket_->getSockfd(), SOL_SOCKET, SO_RCVBUF,
+                       (a2_sockopt_t)&rcvBuf, sizeof(rcvBuf));
+    }
     started_ = true;
     A2_LOG_INFO(fmt("uTP: UDP socket bound on port %u",
                     static_cast<unsigned>(socket_->getAddrInfo().port)));

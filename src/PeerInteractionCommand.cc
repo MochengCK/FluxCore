@@ -365,6 +365,10 @@ bool PeerInteractionCommand::executeInternal()
       }
       btInteractive_->doPostHandshakeProcessing();
       sequence_ = WIRED;
+      // uTP 会话成功建立：清零失败计数（该对端的 uTP 传输已被证实可用）。
+      if (getPeer()->isUtp()) {
+        getPeer()->resetUtpFailures();
+      }
       break;
     }
     case RECEIVER_WAIT_HANDSHAKE: {
@@ -375,6 +379,10 @@ bool PeerInteractionCommand::executeInternal()
       }
       btInteractive_->doPostHandshakeProcessing();
       sequence_ = WIRED;
+      // uTP 会话成功建立：清零失败计数（该对端的 uTP 传输已被证实可用）。
+      if (getPeer()->isUtp()) {
+        getPeer()->resetUtpFailures();
+      }
       break;
     }
     case WIRED:
@@ -447,6 +455,12 @@ void PeerInteractionCommand::onAbort()
 
 void PeerInteractionCommand::onConnectionFailed()
 {
+  // uTP 传输级失败（握手阶段即失败，未到 WIRED）：记入 peer 的 uTP
+  // 失败计数，影响后续探测策略（见 Peer::utpProbeAllowed）。已建立
+  // 会话后的失败（对端断开等）不算传输能力问题，不记账。
+  if (getPeer()->isUtp() && sequence_ != WIRED) {
+    getPeer()->recordUtpFailure();
+  }
   // 异常路径（超时/EOF/协议错误等）真实失败事件：按对端传输类型
   // （TCP/uTP）计入 PeerStorage 失败统计，RPC getPeers 暴露给前端。
   if (auto defaultPeerStorage =

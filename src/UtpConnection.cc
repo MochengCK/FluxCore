@@ -52,11 +52,15 @@ namespace {
 constexpr uint32_t DEFAULT_PACKET_SIZE = 1400;
 constexpr uint32_t MIN_PACKET_SIZE = 150;
 // Receive buffer cap; advertised to the peer as our flow-control window.
-// 1MB：256KB 在高带宽×高延迟链路（如 200ms RTT 跨洲）会把对端发送
-// 速率硬限制在 ~10Mbps；1MB 覆盖 ~40Mbps@200ms 的 BDP，内存上界
-// 仍受 peer 数量约束。应用层每轮引擎循环即排空 recvOut_，实际驻留
-// 远低于该上限。
-constexpr uint32_t RECV_WINDOW = 1024 * 1024;
+// 吞吐硬顶 = 窗口 / RTT（带宽时延积）：1MB 窗口下 300ms RTT 的节点
+// 最多 ~3.5MB/s——正是"开 uTP 后封顶 3-6MB/s、关 uTP 走 TCP 能到
+// 15MB/s"的根因。8MB 覆盖 15MB/s × 500ms RTT 的 BDP。窗口字段为
+// 32 位，协议上无此量级的限制（libtorrent 通告数 MB）。内存驻留由
+// "应用层每轮引擎循环排空 recvOut_"保证，通告值大不等于常驻大。
+constexpr uint32_t RECV_WINDOW = 8 * 1024 * 1024;
+// 乱序重组缓冲独立上限：只需容纳真实的乱序突发（通常几个包），
+// 与通告窗口解耦，防止对端大量乱序灌入时内存失控。
+constexpr uint32_t REORDER_WINDOW = 1024 * 1024;
 // LEDBAT target one-way delay (spec: CCONTROL_TARGET = 100ms).
 constexpr uint32_t CC_TARGET_US = 100 * 1000;
 // Base delay window (spec: 2 minutes).
@@ -365,7 +369,7 @@ void UtpConnection::onData(const PacketHeader& hdr, const unsigned char* payload
   }
   else {
     // Out of order: buffer for SACK + later drain. Bound by window.
-    if (recvBuffered_ + payloadLen <= RECV_WINDOW) {
+    if (recvBuffered_ + payloadLen <= REORDER_WINDOW) {
       // 同一 seq 的重复乱序包：先扣除旧 entry 的字节数，否则
       // recvBuffered_ 只增不减，通告窗口会随重传单调收缩到 0。
       auto dup = recvReorder_.find(s);

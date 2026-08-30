@@ -294,6 +294,11 @@ void InitiatorMSEHandshakeCommand::onAbort()
 
 void InitiatorMSEHandshakeCommand::onConnectionFailed()
 {
+  // uTP 传输级失败（SYN/MSE 握手未完成）：记入 peer 的 uTP 失败计数，
+  // 达上限后不再探测、冷却期内跳过（见 Peer::utpProbeAllowed）。
+  if (isUtp_) {
+    getPeer()->recordUtpFailure();
+  }
   // MSE 握手失败（对端不回应/协议不兼容/超时）：计入 PeerStorage 失败
   // 统计，RPC getPeers 暴露给前端。
   if (auto defaultPeerStorage =
