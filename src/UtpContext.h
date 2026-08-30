@@ -124,6 +124,11 @@ private:
   // Route a retransmitted SYN (carrying the responder's send id) back
   // to the connection that already accepted it.
   UtpConnection* findBySendId(uint16_t sendId);
+  // 立即发送连接 outbox 中的所有待发报文（ACK/握手响应等）。
+  // receiveLoop 每分发一个入站包后调用——若留到下一轮 processTick，
+  // 无后续入站包时引擎 poll 会阻塞至刷新间隔（1s），对端每轮
+  // "窗口→等确认"被拉长 1s，吞吐塌到几十 KB。
+  void flushOutbox(UtpConnection* conn);
   void sendDatagram(const unsigned char* data, size_t len,
                     const std::string& addr, uint16_t port);
 

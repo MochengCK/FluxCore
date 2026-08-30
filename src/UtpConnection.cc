@@ -336,12 +336,15 @@ void UtpConnection::handlePacket(const unsigned char* data, size_t len,
 void UtpConnection::onData(const PacketHeader& hdr, const unsigned char* payload,
                            size_t payloadLen, uint32_t nowUs)
 {
+  // 每个数据包都要回 ACK（与 libtorrent 一致）：重复包意味着我方上一个
+  // ACK 丢了，不回包会让对端再次超时、收缩窗口，吞吐恶性循环。
+  ackPending_ = true;
   uint16_t s = hdr.seqNr;
   if (payloadLen == 0) {
     return;
   }
   if (seqLeq(s, ack_)) {
-    return; // duplicate / old
+    return; // duplicate / old（仍由上面的 ackPending_ 回 ACK）
   }
   if (s == static_cast<uint16_t>(ack_ + 1)) {
     // Contiguous: deliver, then drain the reorder buffer.
@@ -418,6 +421,11 @@ void UtpConnection::onAck(uint16_t ackNr, uint32_t sackBits, uint32_t nowUs)
   }
   if (freed > 0) {
     curWindow_ -= freed;
+    // 超时塌缩到最小包只是丢包探测：一旦有新数据被确认（链路恢复），
+    // 恢复默认包大小——否则 150B 载荷永久拖低吞吐（包头开销占比过高）。
+    if (packetSize_ < DEFAULT_PACKET_SIZE) {
+      packetSize_ = DEFAULT_PACKET_SIZE;
+    }
     if (haveRtt) {
       updateRtt(rttSampleUs);
     }

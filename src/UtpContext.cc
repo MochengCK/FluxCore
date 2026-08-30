@@ -137,13 +137,7 @@ void UtpContext::processTick()
   // 包（如对端 FIN 的最终 ACK），先删后 flush 会把它丢掉，导致对端
   // 重传 FIN 直至超时。
   for (auto& kv : connections_) {
-    auto& conn = kv.second;
-    std::vector<std::vector<unsigned char>> out;
-    conn->drainOutbox(out);
-    for (auto& pkt : out) {
-      sendDatagram(pkt.data(), pkt.size(), conn->getRemoteAddr(),
-                   conn->getRemotePort());
-    }
+    flushOutbox(kv.second.get());
   }
 
   // 3. Remove dead connections.
@@ -195,6 +189,10 @@ void UtpContext::receiveLoop()
     }
     if (conn) {
       conn->handlePacket(buf, static_cast<size_t>(n), nowUs());
+      // 立即把本次分发产生的 ACK/响应发出去：若等下一轮
+      // processTick，无后续入站包时引擎要阻塞到刷新间隔（1s）才发，
+      // 对端窗口换轮被拉长 1s，吞吐只剩几十 KB。
+      flushOutbox(conn);
       continue;
     }
 
@@ -210,6 +208,8 @@ void UtpContext::receiveLoop()
       A2_LOG_INFO(fmt("uTP: accepted inbound SYN from %s:%u (recvId=%u)",
                       sender.addr.c_str(), sender.port,
                       static_cast<unsigned>(incoming->getRecvId())));
+      // SYN-ACK 立即发出（构造函数已入队），不等下一轮迭代。
+      flushOutbox(incoming.get());
       if (acceptHandler_) {
         acceptHandler_(incoming);
       }
@@ -242,6 +242,19 @@ void UtpContext::removeConnection(UtpConnection* conn)
     return;
   }
   connections_.erase(conn->getRecvId());
+}
+
+void UtpContext::flushOutbox(UtpConnection* conn)
+{
+  if (!conn) {
+    return;
+  }
+  std::vector<std::vector<unsigned char>> out;
+  conn->drainOutbox(out);
+  for (auto& pkt : out) {
+    sendDatagram(pkt.data(), pkt.size(), conn->getRemoteAddr(),
+                 conn->getRemotePort());
+  }
 }
 
 void UtpContext::sendDatagram(const unsigned char* data, size_t len,
