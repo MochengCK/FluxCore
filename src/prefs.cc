@@ -148,6 +148,9 @@ const std::string V_GET("get");
 const std::string V_TUNNEL("tunnel");
 const std::string V_PLAIN("plain");
 const std::string V_ARC4("arc4");
+const std::string V_CONNECT_BOTH("both");
+const std::string V_CONNECT_UTP("utp");
+const std::string V_CONNECT_TCP("tcp");
 const std::string V_HTTP("http");
 const std::string V_HTTPS("https");
 const std::string V_FTP("ftp");
@@ -496,6 +499,8 @@ PrefPtr PREF_ENABLE_UPNP = makePref("enable-upnp");
 PrefPtr PREF_ENABLE_NAT_PMP = makePref("enable-nat-pmp");
 // values: true | false
 PrefPtr PREF_ENABLE_UTP = makePref("enable-utp");
+// values: both | utp | tcp
+PrefPtr PREF_BT_CONNECT_PROTOCOL = makePref("bt-connect-protocol");
 // values: a string
 PrefPtr PREF_DHT_LISTEN_ADDR = makePref("dht-listen-addr");
 // values: 1*digit

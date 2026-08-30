@@ -47,6 +47,8 @@
 #include "LogFactory.h"
 #include "SocketCore.h"
 #include "SimpleRandomizer.h"
+#include "Option.h"
+#include "prefs.h"
 #include "util.h"
 #include "fmt.h"
 
@@ -102,10 +104,19 @@ bool PeerListenCommand::execute()
   if (e_->isHaltRequested() || e_->getRequestGroupMan()->downloadFinished()) {
     return true;
   }
+  // 连接协议热更新：仅 uTP 模式下拒绝入站 TCP——仍需 accept() 清掉
+  // 监听队列，随后立即关闭，否则对端会一直挂到超时。
+  const auto* opt = e_->getOption();
+  const bool utpOnly = opt->getAsBool(PREF_ENABLE_UTP) &&
+                       opt->get(PREF_BT_CONNECT_PROTOCOL) == V_CONNECT_UTP;
   for (int i = 0; i < 3 && socket_->isReadable(0); ++i) {
     std::shared_ptr<SocketCore> peerSocket;
     try {
       peerSocket = socket_->acceptConnection();
+      if (utpOnly) {
+        peerSocket->closeConnection();
+        continue;
+      }
       peerSocket->applyIpDscp();
       auto endpoint = peerSocket->getPeerInfo();
 

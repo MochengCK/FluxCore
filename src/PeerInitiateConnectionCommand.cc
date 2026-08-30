@@ -112,11 +112,16 @@ bool PeerInitiateConnectionCommand::executeInternal()
   // IPv6 peer 不发起：共享 UDP socket 绑定的是 AF_INET。
   const bool peerIsV6 =
       getPeer()->getIPAddress().find(':') != std::string::npos;
+  // 连接协议策略（bt-connect-protocol，实时读取支持热更新）：
+  // both = uTP 优先、失败回退 TCP（默认）；utp = 仅 uTP；tcp = 仅 TCP。
+  const std::string& proto = opt->get(PREF_BT_CONNECT_PROTOCOL);
+  const bool utpAllowed =
+      opt->getAsBool(PREF_ENABLE_UTP) && proto != V_CONNECT_TCP;
+  const bool utpOnly = utpAllowed && proto == V_CONNECT_UTP;
   // uTP 探测门控（对齐 libtorrent utp_failures）：首次尝试恒允许；
   // 失败过但未达上限，需距上次失败超过冷却间隔才再探测；连续失败
   // 达到上限后该 peer 固定走 TCP，不再浪费探测预算。
-  if (utpCtx && opt->getAsBool(PREF_ENABLE_UTP) && !peerIsV6 &&
-      getPeer()->utpProbeAllowed()) {
+  if (utpCtx && utpAllowed && !peerIsV6 && getPeer()->utpProbeAllowed()) {
     const bool utpCapable = getPeer()->isUtpCapable();
     const bool firstAttempt = !getPeer()->hasUtpTried();
     // 0 = 完整重试预算，仅用于"已知能力且首次尝试"；其余情况（能力
@@ -158,6 +163,13 @@ bool PeerInitiateConnectionCommand::executeInternal()
       }
       return true;
     }
+  }
+
+  // 仅 uTP 模式：不回退 TCP。uTP 未发起（探测冷却中/注册失败）时把
+  // peer 退回存储，等后续调度再试；连续失败达上限后该 peer 自然沉寂。
+  if (utpOnly) {
+    peerStorage_->returnPeer(getPeer());
+    return true;
   }
 
   createSocket();

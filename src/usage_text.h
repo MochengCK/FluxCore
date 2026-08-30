@@ -356,6 +356,13 @@
     "                              congestion control, improving throughput on\n" \
     "                              lossy or congested links and on NATs that\n" \
     "                              throttle TCP.")
+#define TEXT_BT_CONNECT_PROTOCOL                                        \
+  _(" --bt-connect-protocol=both|utp|tcp Set the transport protocol policy for\n" \
+    "                              BT peer connections. 'both': try uTP first and\n" \
+    "                              fall back to TCP on failure (default). 'utp':\n" \
+    "                              use uTP only, never TCP. 'tcp': use TCP only,\n" \
+    "                              rejecting uTP. Requires enable-utp=true for the\n" \
+    "                              uTP modes to take effect.")
 #define TEXT_DHT_LISTEN_PORT                                            \
   _(" --dht-listen-port=PORT...    Set UDP listening port used by DHT(IPv4, IPv6)\n"   \
     "                              and UDP tracker. Multiple ports can be specified\n" \

@@ -247,9 +247,10 @@ void BtSetup::setup(std::vector<std::unique_ptr<Command>>& commands,
         e->getUtpContext()->setAcceptHandler(
             [e](const std::shared_ptr<utp::UtpConnection>& conn) {
               const auto* opt = e->getOption();
-              // 热更新：enable-utp 被关闭时拒绝新入站 uTP 连接（出站
-              // 侧 PeerInitiateConnectionCommand 同样实时读取该选项）。
-              if (!opt->getAsBool(PREF_ENABLE_UTP)) {
+              // 热更新：enable-utp 被关闭、或连接协议设为仅 TCP 时，
+              // 拒绝新入站 uTP 连接（出站侧同样实时读取这些选项）。
+              if (!opt->getAsBool(PREF_ENABLE_UTP) ||
+                  opt->get(PREF_BT_CONNECT_PROTOCOL) == V_CONNECT_TCP) {
                 A2_LOG_INFO(
                     "uTP: inbound connection rejected (uTP disabled via "
                     "option change; peer may retry over TCP)");

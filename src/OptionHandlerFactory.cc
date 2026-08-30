@@ -1515,6 +1515,16 @@ std::vector<OptionHandler*> OptionHandlerFactory::createOptionHandlers()
     handlers.push_back(op);
   }
   {
+    OptionHandler* op(new ParameterOptionHandler(
+        PREF_BT_CONNECT_PROTOCOL, TEXT_BT_CONNECT_PROTOCOL, V_CONNECT_BOTH,
+        {V_CONNECT_BOTH, V_CONNECT_UTP, V_CONNECT_TCP}));
+    op->addTag(TAG_BITTORRENT);
+    op->setInitialOption(true);
+    op->setChangeGlobalOption(true);
+    op->setChangeOptionForReserved(true);
+    handlers.push_back(op);
+  }
+  {
     OptionHandler* op(new DefaultOptionHandler(
         PREF_BT_EXCLUDE_TRACKER, TEXT_BT_EXCLUDE_TRACKER, NO_DESCRIPTION,
         "URI,... "

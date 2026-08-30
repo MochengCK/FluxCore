@@ -105,6 +105,10 @@ extern const std::string V_GET;
 extern const std::string V_TUNNEL;
 extern const std::string V_PLAIN;
 extern const std::string V_ARC4;
+// BT 连接协议模式（bt-connect-protocol）取值
+extern const std::string V_CONNECT_BOTH; // uTP 优先，失败回退 TCP
+extern const std::string V_CONNECT_UTP;  // 仅 uTP
+extern const std::string V_CONNECT_TCP;  // 仅 TCP
 extern const std::string V_HTTP;
 extern const std::string V_HTTPS;
 extern const std::string V_FTP;
@@ -448,6 +452,8 @@ extern PrefPtr PREF_ENABLE_UPNP;
 extern PrefPtr PREF_ENABLE_NAT_PMP;
 // values: true | false
 extern PrefPtr PREF_ENABLE_UTP;
+// values: both | utp | tcp
+extern PrefPtr PREF_BT_CONNECT_PROTOCOL;
 // values: a string
 extern PrefPtr PREF_DHT_LISTEN_ADDR;
 // values: 1*digit
