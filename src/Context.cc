@@ -281,6 +281,10 @@ Context::Context(bool standalone, int argc, char** argv, const KeyVals& options)
         // each control file so RPC status reports it immediately.
         for (auto& rg : requestGroups) {
           rg->preloadProgressFromControlFile();
+          // Completed seeders drop their control file, so paused-seeding
+          // groups restored without one would otherwise report as a plain
+          // paused download. Flag them from the on-disk file state.
+          rg->detectPausedAfterCompleteOnRestore();
         }
       }
 #if defined(ENABLE_BITTORRENT) || defined(ENABLE_METALINK)

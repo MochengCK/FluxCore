@@ -152,6 +152,7 @@ RequestGroup::RequestGroup(const std::shared_ptr<GroupId>& gid,
       forceHaltRequested_(false),
       pauseRequested_(false),
       restartRequested_(false),
+      pausedAfterComplete_(false),
       inMemoryDownload_(false),
       seedOnly_(false)
 {
@@ -916,6 +917,42 @@ void RequestGroup::preloadProgressFromControlFile()
   }
 }
 
+void RequestGroup::detectPausedAfterCompleteOnRestore()
+{
+  // Only meaningful for paused BitTorrent groups restored from a
+  // session: an incomplete dataset would otherwise be mislabeled as a
+  // seeder.
+  if (!isPauseRequested()) {
+    return;
+  }
+#ifdef ENABLE_BITTORRENT
+  if (!downloadContext_->hasAttribute(CTX_ATTR_BT) ||
+      bittorrent::getTorrentAttrs(downloadContext_)->metadata.empty()) {
+    return;
+  }
+  // Completed seeders drop their .xfer control file (see
+  // RequestGroupMan::save), so at restore there is no pieceStorage_ to
+  // consult. All requested files present at full size is the correct
+  // signal that the download had finished before the app exited.
+  const auto& entries = downloadContext_->getFileEntries();
+  for (const auto& fe : entries) {
+    if (!fe->isRequested()) {
+      continue;
+    }
+    File f(fe->getPath());
+    if (!f.exists() || f.size() != fe->getLength()) {
+      return;
+    }
+  }
+  pausedAfterComplete_ = true;
+  A2_LOG_INFO(fmt("GID#%s restored as paused after complete (all requested "
+                  "files present)",
+                  gid_->toHex().c_str()));
+#else  // !ENABLE_BITTORRENT
+  return;
+#endif // !ENABLE_BITTORRENT
+}
+
 void RequestGroup::tryAutoFileRenaming()
 {
   if (!option_->getAsBool(PREF_AUTO_FILE_RENAMING)) {
@@ -1517,7 +1554,7 @@ bool RequestGroup::isSeeder() const
 #ifdef ENABLE_BITTORRENT
   return downloadContext_->hasAttribute(CTX_ATTR_BT) &&
          !bittorrent::getTorrentAttrs(downloadContext_)->metadata.empty() &&
-         downloadFinished();
+         (downloadFinished() || pausedAfterComplete_);
 #else  // !ENABLE_BITTORRENT
   return false;
 #endif // !ENABLE_BITTORRENT

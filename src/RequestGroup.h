@@ -186,6 +186,14 @@ private:
   // download first.
   bool restartRequested_;
 
+  // Set at session restore for a paused BitTorrent group whose files
+  // are all complete on disk (i.e. the task had finished and been
+  // seeding before the app exited). The .xfer control file of such
+  // groups is removed when seeding completes, so no pieceStorage_ is
+  // reconstructed after restart and isSeeder() would otherwise report
+  // a plain paused download instead of "paused after seeding".
+  bool pausedAfterComplete_;
+
   // This flag just indicates that the downloaded file is not saved disk but
   // just sits in memory.
   bool inMemoryDownload_;
@@ -398,6 +406,13 @@ public:
   // Used at session restore so paused downloads report their real
   // progress before being resumed.
   void preloadProgressFromControlFile();
+
+  // For a paused group restored from session with no control file
+  // (completed seeders drop it), verify all requested files exist with
+  // the expected sizes and flag the group as "paused after seeding" so
+  // RPC still reports task.status-paused-seeding instead of a plain
+  // paused status.
+  void detectPausedAfterCompleteOnRestore();
 
   void shouldCancelDownloadForSafety();
 
